@@ -68,6 +68,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # LOCAL PATCH (2026-10-07): battery SoC/SoH keys served at registers 113-114.
 BATTERY_STATUS_KEYS = ("StateOfCharge", "BatteryStateOfHealth")
+# EXTENDED: give up on 113-114 after this many failed reads in a row (no BMS link).
+BMS_MAX_FAILURES = 3
 
 
 async def async_setup(hass, config):
@@ -83,64 +85,77 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Initialize inverter with model-specific sensors
         inverter = MustInverter(hass, entry)
 
-        successConnecting = await inverter.connect()
-
-        if not successConnecting:
-            raise ConfigEntryNotReady("Unable to connect to modbus device")
-
-        successReading = await inverter._async_refresh_modbus_data()
-
-        if not successReading:
-            raise ConfigEntryNotReady("Unable to read from modbus device")
-
-        model = inverter.model
-        sensors = get_sensors_for_model(model)
-
-        # LOCAL PATCH (2026-10-07): a PV1800 (PV18-4024PREM, fw 2.35.16) with a
-        # CAN-connected lithium BMS also serves battery SoC/SoH at registers 113-114
-        # (verified by a one-off read: [22, 100] with the battery at 22%).
-        # Reuse the PV1900 sensor definitions for those two keys.
-        if model not in (MODEL_PV1900, MODEL_PH1100):
-            have = {s.name for s in sensors}
-            sensors = list(sensors) + [
-                s
-                for s in get_sensors_for_model(MODEL_PV1900)
-                if s.name in BATTERY_STATUS_KEYS and s.name not in have
-            ]
-
-        _LOGGER.debug("Setting up Must Inverter with model: %s", model)
-
-        # Store sensors to be used by platforms
-        hass.data[DOMAIN][entry.entry_id] = {"inverter": inverter, "sensors": sensors}
-
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-        # Removing register monitor as we've found all needed registers
-        # If you need to add it back, uncomment the following lines and set the ranges to scan in register_monitor.py
-        # monitor = RegisterMonitor(hass)
-
-        # Add monitoring to the update cycle, but at a slower rate
-        # async def delayed_monitor():
-        #     """Run monitor at a slower rate to avoid overwhelming the device."""
-        #     try:
-        #         while True:
-        #             await monitor.scan_ranges(inverter)
-        #             await asyncio.sleep(300)  # Run every 5 minutes
-        #     except asyncio.CancelledError:
-        #         _LOGGER.debug("Register monitor task cancelled")
-        #         raise
-
-        # monitor_task = asyncio.create_task(delayed_monitor())
-
-        # Store the task so we can cancel it later
-        # hass.data[DOMAIN][entry.entry_id]["monitor_task"] = monitor_task
-
-        return True
+        try:
+            return await _async_setup_inverter(hass, entry, inverter)
+        except BaseException:
+            # EXTENDED (upstream PR #117): a failed setup must never leave the serial
+            # port open - the leaked client keeps the exclusive port lock, so every
+            # retry fails with "Could not exclusively lock port" until HA restarts.
+            inverter.close()
+            hass.data[DOMAIN].pop(entry.entry_id, None)
+            raise
     except ConfigEntryNotReady as ex:
         raise ex
     except Exception as ex:
         _LOGGER.exception("Error setting up modbus device", exc_info=True)
         raise ConfigEntryNotReady("Unknown error connecting to modbus device") from ex
+
+
+async def _async_setup_inverter(hass: HomeAssistant, entry: ConfigEntry, inverter) -> bool:
+    """Connect, read once and forward platforms (body of the original setup)."""
+    successConnecting = await inverter.connect()
+
+    if not successConnecting:
+        raise ConfigEntryNotReady("Unable to connect to modbus device")
+
+    successReading = await inverter._async_refresh_modbus_data()
+
+    if not successReading:
+        raise ConfigEntryNotReady("Unable to read from modbus device")
+
+    model = inverter.model
+    sensors = get_sensors_for_model(model)
+
+    # LOCAL PATCH (2026-10-07): a PV1800 (PV18-4024PREM, fw 2.35.16) with a
+    # CAN-connected lithium BMS also serves battery SoC/SoH at registers 113-114
+    # (verified by a one-off read: [22, 100] with the battery at 22%).
+    # Reuse the PV1900 sensor definitions for those two keys.
+    if model not in (MODEL_PV1900, MODEL_PH1100):
+        have = {s.name for s in sensors}
+        sensors = list(sensors) + [
+            s
+            for s in get_sensors_for_model(MODEL_PV1900)
+            if s.name in BATTERY_STATUS_KEYS and s.name not in have
+        ]
+
+    _LOGGER.debug("Setting up Must Inverter with model: %s", model)
+
+    # Store sensors to be used by platforms
+    hass.data[DOMAIN][entry.entry_id] = {"inverter": inverter, "sensors": sensors}
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Removing register monitor as we've found all needed registers
+    # If you need to add it back, uncomment the following lines and set the ranges to scan in register_monitor.py
+    # monitor = RegisterMonitor(hass)
+
+    # Add monitoring to the update cycle, but at a slower rate
+    # async def delayed_monitor():
+    #     """Run monitor at a slower rate to avoid overwhelming the device."""
+    #     try:
+    #         while True:
+    #             await monitor.scan_ranges(inverter)
+    #             await asyncio.sleep(300)  # Run every 5 minutes
+    #     except asyncio.CancelledError:
+    #         _LOGGER.debug("Register monitor task cancelled")
+    #         raise
+
+    # monitor_task = asyncio.create_task(delayed_monitor())
+
+    # Store the task so we can cancel it later
+    # hass.data[DOMAIN][entry.entry_id]["monitor_task"] = monitor_task
+
+    return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -201,6 +216,7 @@ class MustInverter:
         self._device_id = entry.options.get(CONF_DEVICE_ID, DEFAULT_DEVICE_ID)
         self._scan_interval = timedelta(seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
         self._reading = False
+        self._bms_failures = 0
         self.registers = {}
         self.data = {}
 
@@ -260,6 +276,19 @@ class MustInverter:
     def has_extra_registers(self):
         return self.model == MODEL_PV1900
 
+    def _note_bms_failure(self, response):
+        """EXTENDED: count failed BMS (113-114) reads; stop asking after a few."""
+        self._bms_failures += 1
+        if self._bms_failures >= BMS_MAX_FAILURES:
+            _LOGGER.warning(
+                "battery SoC/SoH registers 113-114 failed %s times in a row (%s) - this inverter "
+                "probably has no BMS link; not reading them again until Home Assistant restarts",
+                self._bms_failures,
+                response,
+            )
+        else:
+            _LOGGER.debug("battery SoC/SoH read failed (%s/%s): %s", self._bms_failures, BMS_MAX_FAILURES, response)
+
     def close(self):
         _LOGGER.info("closing modbus client")
         self._client.close()
@@ -313,6 +342,15 @@ class MustInverter:
             )
             return False
         self._reading = True
+        try:
+            return await self._read_modbus_data_locked()
+        finally:
+            # EXTENDED: always clear the flag. Upstream left it set when a read was
+            # cancelled or raised, so every later poll was skipped ("previous read
+            # still in progress") until Home Assistant was restarted.
+            self._reading = False
+
+    async def _read_modbus_data_locked(self):
 
         # Reading all the control messages at once (ranges 20016-20100 and/or
         # 10009-10100 are problematic) causes the inverter to shut down
@@ -347,9 +385,12 @@ class MustInverter:
                         (16205, 16208, convert_pv_data),  # PV2 Data (Voltage, Current, Power)
                     ]
                 )
-            else:
+            elif self._bms_failures < BMS_MAX_FAILURES:
                 # LOCAL PATCH (2026-10-07): battery SoC/SoH only (NOT the PV2 ranges)
                 # for PV1800 units with a BMS; verified on PV18-4024PREM fw 2.35.16.
+                # EXTENDED: inverters without a BMS link answer this with an error;
+                # after BMS_MAX_FAILURES failed reads in a row it is skipped until the
+                # next restart/reload, so they don't log an error every poll.
                 registersAddresses.append((113, 114, convert_battery_status))
 
         read = {}
@@ -375,7 +416,10 @@ class MustInverter:
                         address=start, count=count, device_id=self._device_id
                     )
                 if response.isError():
-                    _LOGGER.error("error reading modbus data at address %s: %s", start, response)
+                    if start == 113 and not self.has_extra_registers:
+                        self._note_bms_failure(response)
+                    else:
+                        _LOGGER.error("error reading modbus data at address %s: %s", start, response)
                 elif len(response.registers) != count:
                     _LOGGER.warning(
                         "wrong number of registers read at address %s, expected %s, got %s - this usually is caused by concurrent access to modbus (usb/wifi/rs485), please remove other devices",
@@ -398,6 +442,8 @@ class MustInverter:
                     )
                 else:
                     _LOGGER.debug("Correctly read %s registers from start %s", count, start)
+                    if start == 113:
+                        self._bms_failures = 0
                     for i in range(count):
                         read[start + i] = response.registers[i]
                     self.data.update(register[2](read))
@@ -405,12 +451,20 @@ class MustInverter:
                 _LOGGER.warning("cancelled modbus read")
                 raise
             except:
-                _LOGGER.error("error reading modbus data at address %s", start, exc_info=True)
+                if start == 113 and not self.has_extra_registers:
+                    self._note_bms_failure("exception")
+                else:
+                    _LOGGER.error("error reading modbus data at address %s", start, exc_info=True)
 
         _LOGGER.debug("finished reading modbus data, %s", read)
         self.registers = read
-        self._reading = False
         # _LOGGER.debug("Data: %s", self.data)
+
+        if "InverterSerialNumber" not in self.data:
+            # EXTENDED (upstream PR #117): nothing could be read at all (e.g. the
+            # inverter is powered off) - report failure instead of a KeyError.
+            _LOGGER.warning("no data could be read from the inverter")
+            return False
 
         if self.data["InverterSerialNumber"] == 0xFFFFFFFF or self.data["InverterSerialNumber"] == 0:
             ir.async_create_issue(
@@ -433,5 +487,7 @@ class MustInverter:
             "model": self.data.get("InverterMachineType", self.model),
             "hw_version": self.data.get("InverterHardwareVersion"),
             "sw_version": self.data.get("InverterSoftwareVersion"),
-            "serial_number": self.data["InverterSerialNumber"],
+            # EXTENDED: HA 2026.12 requires a string serial number (upstream issue #119).
+            # The device identifier is left unchanged so existing devices/entities keep their ids.
+            "serial_number": str(self.data["InverterSerialNumber"]),
         }

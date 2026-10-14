@@ -1,13 +1,19 @@
 {
   "domain": "must_inverter",
-  "name": "Must Inverter",
-  "codeowners": ["@mukaschultze"],
+  "name": "Must Inverter Extended",
+  "codeowners": [
+    "@mukaschultze",
+    "@VibeOps-ZA"
+  ],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/mukaschultze/ha-must-inverter",
+  "documentation": "https://github.com/VibeOps-ZA/must_inverter_extended",
   "integration_type": "device",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/mukaschultze/ha-must-inverter/issues",
-  "requirements": ["pymodbus>=3.10.0", "aiofiles==24.1.0"],
-  "version": "0.0.1"
+  "issue_tracker": "https://github.com/VibeOps-ZA/must_inverter_extended/issues",
+  "requirements": [
+    "pymodbus>=3.10.0",
+    "aiofiles==24.1.0"
+  ],
+  "version": "1.0.0"
 }

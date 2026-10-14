@@ -1,8 +1,8 @@
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
-from homeassistant.const import EntityCategory, Platform, UnitOfEnergy
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.const import EntityCategory, Platform, UnitOfEnergy, UnitOfPower
 from homeassistant.core import callback
 
 from .const import DOMAIN, OPTIONS, Sensor
@@ -38,6 +38,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     entities.extend(MustRawRegisterSensor(inverter, address) for address in RAW_REGISTERS)
 
+    # EXTENDED: split battery power into charge / discharge (upstream issue #44) so the
+    # Energy dashboard can use them via the Integral helper. Disabled by default.
+    if any(s.name == "BattPower" for s in inverter_data["sensors"]):
+        entities.append(MustBatteryFlowSensor(inverter, charging=True))
+        entities.append(MustBatteryFlowSensor(inverter, charging=False))
+
     async_add_entities(entities)
     return True
 
@@ -48,6 +54,9 @@ class MustRawRegisterSensor(SensorEntity):
     _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_state_class = SensorStateClass.MEASUREMENT
+    # EXTENDED: research sensors - off for new installs (enable per entity if wanted).
+    # Entities that already exist keep their enabled/disabled state.
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, inverter: MustInverter, address: int):
         self._inverter = inverter
@@ -75,6 +84,49 @@ class MustRawRegisterSensor(SensorEntity):
     @property
     def available(self) -> bool:
         return self._address in self._inverter.registers
+
+    @property
+    def device_info(self) -> dict[str, Any] | None:
+        return self._inverter._device_info()
+
+
+class MustBatteryFlowSensor(SensorEntity):
+    """EXTENDED: battery charge or discharge power (W, always >= 0) from BattPower.
+
+    BattPower (register 25273) is negative while the battery charges and positive while
+    it discharges (verified on a PV18-4024PREM). These two sensors are handy as Energy
+    dashboard sources when wrapped in an "Integral" (Riemann sum) helper.
+    """
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, inverter: MustInverter, charging: bool):
+        self._inverter = inverter
+        self._charging = charging
+        key = "BatteryChargePower" if charging else "BatteryDischargePower"
+        self._attr_unique_id = f"{self._inverter.data['InverterSerialNumber']}_{key}"
+        self._attr_name = "Battery charge power" if charging else "Battery discharge power"
+
+    async def async_added_to_hass(self):
+        self._inverter.async_add_must_inverter_sensor(self._inverter_data_updated)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._inverter.async_remove_must_inverter_sensor(self._inverter_data_updated)
+
+    @callback
+    def _inverter_data_updated(self):
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self):
+        power = self._inverter.data.get("BattPower")
+        if power is None:
+            return None
+        return max(0, -power) if self._charging else max(0, power)
 
     @property
     def device_info(self) -> dict[str, Any] | None:
