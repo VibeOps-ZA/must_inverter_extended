@@ -4,6 +4,7 @@ import contextlib
 
 from datetime import timedelta
 
+from homeassistant.helpers import config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
@@ -65,6 +66,9 @@ PLATFORMS = [
     Platform.TIME,
 ]
 _LOGGER = logging.getLogger(__name__)
+
+# EXTENDED: config-entry only (silences the hassfest CONFIG_SCHEMA warning).
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # LOCAL PATCH (2026-10-07): battery SoC/SoH keys served at registers 113-114.
 BATTERY_STATUS_KEYS = ("StateOfCharge", "BatteryStateOfHealth")
@@ -277,7 +281,7 @@ class MustInverter:
         return self.model == MODEL_PV1900
 
     def _note_bms_failure(self, response):
-        """EXTENDED: count failed BMS (113-114) reads; stop asking after a few."""
+        """Count failed BMS (113-114) reads and stop asking after a few (EXTENDED)."""
         self._bms_failures += 1
         if self._bms_failures >= BMS_MAX_FAILURES:
             _LOGGER.warning(
@@ -450,7 +454,7 @@ class MustInverter:
             except asyncio.exceptions.CancelledError:
                 _LOGGER.warning("cancelled modbus read")
                 raise
-            except:
+            except Exception:
                 if start == 113 and not self.has_extra_registers:
                     self._note_bms_failure("exception")
                 else:

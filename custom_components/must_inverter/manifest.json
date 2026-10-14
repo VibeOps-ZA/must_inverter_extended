@@ -13,7 +13,7 @@
   "issue_tracker": "https://github.com/VibeOps-ZA/must_inverter_extended/issues",
   "requirements": [
     "pymodbus>=3.10.0",
-    "aiofiles==24.1.0"
+    "aiofiles>=24.1.0"
   ],
   "version": "1.0.0"
 }

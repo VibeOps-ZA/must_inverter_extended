@@ -37,5 +37,10 @@ First release of the extended variant, based on upstream **v0.2.5** (commit 9fd3
 - No `KeyError` when nothing at all could be read (inverter off) - setup retries cleanly
   (upstream PR #117).
 
+- `aiofiles` requirement relaxed from `==24.1.0` to `>=24.1.0` - the exact pin conflicts with
+  current Home Assistant (which ships 25.1.0) and fails hassfest validation.
+- hassfest: declare `CONFIG_SCHEMA` (config-entry only).
+- Bare `except:` in the read loop replaced by `except Exception:` (cancellation is still re-raised).
+
 ### Removed
 - Dependabot config and the daily scheduled validation run (validation still runs on every push).
