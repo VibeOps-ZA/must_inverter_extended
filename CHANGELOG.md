@@ -4,6 +4,21 @@ All notable changes to **Must Inverter Extended** are listed here.
 Versions before 1.0.0 are the original [ha-must-inverter](https://github.com/mukaschultze/ha-must-inverter)
 releases by @mukaschultze - see its [releases page](https://github.com/mukaschultze/ha-must-inverter/releases).
 
+## [1.0.1] - 2026-10-14
+
+### Fixed
+- **"Mismatched Modbus Registers" repair raised by harmless one-off reads.** On a single
+  inverter with nothing else on the serial port, every mismatch seen in a week happened within
+  about a minute of a Home Assistant restart (a late reply from a timed-out request read as the
+  answer to the next one). The repair is now raised only after **3 mismatches within 10 minutes**,
+  ignoring the first 2 minutes after start, and **clears itself after 10 good reads**. A stale
+  repair from before a restart is removed at setup.
+- Serial receive buffer is flushed after (re)connecting and before the next read after an
+  error or mismatch, so a late reply can't be taken as the answer to the next request.
+
+### Changed
+- Repair text explains the real causes; "Learn more" links to this README.
+
 ## [1.0.0] - 2026-10-14
 
 First release of the extended variant, based on upstream **v0.2.5** (commit 9fd3315).

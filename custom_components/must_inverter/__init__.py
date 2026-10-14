@@ -1,4 +1,6 @@
 import asyncio
+import time
+from collections import deque
 import logging
 import contextlib
 
@@ -67,6 +69,15 @@ PLATFORMS = [
 ]
 _LOGGER = logging.getLogger(__name__)
 
+# EXTENDED 1.0.1: only flag persistent register mismatches (one-offs happen around restarts)
+STARTUP_GRACE_S = 120
+MISMATCH_WINDOW_S = 600
+MISMATCH_COUNT = 3
+CLEAR_AFTER_GOOD_READS = 10
+MISMATCH_LEARN_MORE_URL = (
+    "https://github.com/VibeOps-ZA/must_inverter_extended#repair-mismatched-modbus-registers"
+)
+
 # EXTENDED: config-entry only (silences the hassfest CONFIG_SCHEMA warning).
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -83,6 +94,8 @@ async def async_setup(hass, config):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the must inverter component."""
+    # EXTENDED 1.0.1: a mismatch repair from before a restart is stale - start clean
+    ir.async_delete_issue(hass, DOMAIN, "mismatched_registers")
     try:
         entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
@@ -221,6 +234,12 @@ class MustInverter:
         self._scan_interval = timedelta(seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
         self._reading = False
         self._bms_failures = 0
+        # EXTENDED 1.0.1: mismatched-register handling (see _note_mismatch)
+        self._started = time.monotonic()
+        self._mismatches = deque()
+        self._good_reads = 0
+        self._issue_raised = False
+        self._needs_flush = True
         self.registers = {}
         self.data = {}
 
@@ -293,6 +312,60 @@ class MustInverter:
         else:
             _LOGGER.debug("battery SoC/SoH read failed (%s/%s): %s", self._bms_failures, BMS_MAX_FAILURES, response)
 
+    def _flush_input(self):
+        """Drop stale bytes from the serial receive buffer (EXTENDED 1.0.1).
+
+        A reply that arrives after its request timed out (Home Assistant busy, e.g. while
+        starting or stopping) would otherwise be taken as the answer to the next request,
+        giving a 'wrong number of registers' read. Serial mode only; no-op for TCP/UDP.
+        """
+        try:
+            transport = getattr(getattr(self._client, "ctx", None), "transport", None)
+            ser = getattr(transport, "sync_serial", None)
+            if ser is not None:
+                ser.reset_input_buffer()
+                _LOGGER.debug("serial input buffer flushed")
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("could not flush the serial input buffer", exc_info=True)
+
+    def _note_mismatch(self):
+        """Raise the repair only for a persistent problem (EXTENDED 1.0.1).
+
+        Single mismatches right after a restart are expected and harmless. The repair is
+        raised after MISMATCH_COUNT mismatches within MISMATCH_WINDOW_S, ignoring the
+        first STARTUP_GRACE_S after start, and cleared after CLEAR_AFTER_GOOD_READS good reads.
+        """
+        now = time.monotonic()
+        self._good_reads = 0
+        self._needs_flush = True
+        self._mismatches.append(now)
+        while self._mismatches and now - self._mismatches[0] > MISMATCH_WINDOW_S:
+            self._mismatches.popleft()
+        if (
+            not self._issue_raised
+            and now - self._started > STARTUP_GRACE_S
+            and len(self._mismatches) >= MISMATCH_COUNT
+        ):
+            self._issue_raised = True
+            ir.async_create_issue(
+                self._hass,
+                DOMAIN,
+                "mismatched_registers",
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="mismatched_registers",
+                is_persistent=False,
+                learn_more_url=MISMATCH_LEARN_MORE_URL,
+            )
+
+    def _note_good_read(self):
+        self._good_reads += 1
+        if self._issue_raised and self._good_reads >= CLEAR_AFTER_GOOD_READS:
+            self._issue_raised = False
+            self._mismatches.clear()
+            ir.async_delete_issue(self._hass, DOMAIN, "mismatched_registers")
+            _LOGGER.info("reads are consistent again - mismatched registers repair cleared")
+
     def close(self):
         _LOGGER.info("closing modbus client")
         self._client.close()
@@ -313,6 +386,7 @@ class MustInverter:
             result = await self._client.connect()
 
         if result:
+            self._flush_input()
             _LOGGER.info(
                 "successfully connected to %s:%s", self._client.comm_params.host, self._client.comm_params.port
             )
@@ -416,6 +490,9 @@ class MustInverter:
                     break
 
                 async with self._lock:
+                    if self._needs_flush:
+                        self._needs_flush = False
+                        self._flush_input()
                     response = await self._client.read_holding_registers(
                         address=start, count=count, device_id=self._device_id
                     )
@@ -424,6 +501,7 @@ class MustInverter:
                         self._note_bms_failure(response)
                     else:
                         _LOGGER.error("error reading modbus data at address %s: %s", start, response)
+                    self._needs_flush = True
                 elif len(response.registers) != count:
                     _LOGGER.warning(
                         "wrong number of registers read at address %s, expected %s, got %s - this usually is caused by concurrent access to modbus (usb/wifi/rs485), please remove other devices",
@@ -434,18 +512,10 @@ class MustInverter:
                     # Log the actual values received
                     _LOGGER.debug("Received registers (wrong): %s", response.registers)
 
-                    ir.async_create_issue(
-                        self._hass,
-                        DOMAIN,
-                        "mismatched_registers",
-                        is_fixable=False,
-                        severity=ir.IssueSeverity.ERROR,
-                        translation_key="mismatched_registers",
-                        is_persistent=False,
-                        learn_more_url="https://github.com/mukaschultze/ha-must-inverter/issues/47",
-                    )
+                    self._note_mismatch()
                 else:
                     _LOGGER.debug("Correctly read %s registers from start %s", count, start)
+                    self._note_good_read()
                     if start == 113:
                         self._bms_failures = 0
                     for i in range(count):
@@ -455,6 +525,7 @@ class MustInverter:
                 _LOGGER.warning("cancelled modbus read")
                 raise
             except Exception:
+                self._needs_flush = True
                 if start == 113 and not self.has_extra_registers:
                     self._note_bms_failure("exception")
                 else:

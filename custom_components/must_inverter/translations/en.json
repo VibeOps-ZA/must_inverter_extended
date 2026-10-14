@@ -152,7 +152,7 @@
     },
     "mismatched_registers": {
       "title": "Mismatched Modbus Registers",
-      "description": "The data returned by the modbus device does not match the data that the integration is trying to read.\n\nThis is most likely a race condition from multiple devices trying to concurrenty read from the same serial port.\n\nPlease check the serial configuration and make sure no other devices are connected to the inverter."
+      "description": "The inverter returned data that doesn't match the registers the integration asked for, at least 3 times in 10 minutes.\n\nUsual causes: another device or program reading the same serial port / RS485 bus, a loose or long cable, or electrical noise. A single mismatch right after Home Assistant restarts is normal and is ignored.\n\nThis repair clears itself after 10 good reads in a row."
     }
   },
   "selector": {

@@ -291,6 +291,23 @@ Bugs and ideas: [open an issue](https://github.com/VibeOps-ZA/must_inverter_exte
 
 This project is not affiliated with Must Solar. Use at your own risk.
 
+## Repair: Mismatched Modbus Registers
+
+Home Assistant shows this repair when the inverter's replies don't match what the integration
+asked for **at least 3 times within 10 minutes** (ignored for the first 2 minutes after Home
+Assistant starts). It clears itself after 10 good reads in a row.
+
+A single mismatch right after a restart is normal: Home Assistant is busy while starting or
+stopping, a request times out, and its late reply arrives while the next request is waiting.
+Since 1.0.1 the integration flushes the serial buffer to recover and does not raise the repair
+for these.
+
+If the repair keeps coming back, check:
+1. **Only one reader on the port.** No second integration, add-on/app (e.g. Solar Assistant), or
+   WiFi/RS485 dongle polling the same inverter port at the same time.
+2. **Cabling.** Short, good-quality USB/RS485 cable; no loose connectors.
+3. **Timeout/retries** in the integration options: raise the timeout if your link is slow.
+
 ## License
 
 MIT - see [LICENSE](LICENSE). Original copyright (c) 2024 Samuel Schultze; modifications
