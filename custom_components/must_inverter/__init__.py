@@ -66,6 +66,9 @@ PLATFORMS = [
 ]
 _LOGGER = logging.getLogger(__name__)
 
+# LOCAL PATCH (2026-10-07): battery SoC/SoH keys served at registers 113-114.
+BATTERY_STATUS_KEYS = ("StateOfCharge", "BatteryStateOfHealth")
+
 
 async def async_setup(hass, config):
     hass.data[DOMAIN] = {}
@@ -92,6 +95,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         model = inverter.model
         sensors = get_sensors_for_model(model)
+
+        # LOCAL PATCH (2026-10-07): a PV1800 (PV18-4024PREM, fw 2.35.16) with a
+        # CAN-connected lithium BMS also serves battery SoC/SoH at registers 113-114
+        # (verified by a one-off read: [22, 100] with the battery at 22%).
+        # Reuse the PV1900 sensor definitions for those two keys.
+        if model not in (MODEL_PV1900, MODEL_PH1100):
+            have = {s.name for s in sensors}
+            sensors = list(sensors) + [
+                s
+                for s in get_sensors_for_model(MODEL_PV1900)
+                if s.name in BATTERY_STATUS_KEYS and s.name not in have
+            ]
+
         _LOGGER.debug("Setting up Must Inverter with model: %s", model)
 
         # Store sensors to be used by platforms
@@ -331,6 +347,10 @@ class MustInverter:
                         (16205, 16208, convert_pv_data),  # PV2 Data (Voltage, Current, Power)
                     ]
                 )
+            else:
+                # LOCAL PATCH (2026-10-07): battery SoC/SoH only (NOT the PV2 ranges)
+                # for PV1800 units with a BMS; verified on PV18-4024PREM fw 2.35.16.
+                registersAddresses.append((113, 114, convert_battery_status))
 
         read = {}
 

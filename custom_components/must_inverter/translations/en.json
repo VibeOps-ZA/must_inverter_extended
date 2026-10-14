@@ -213,7 +213,9 @@
       "batterystopchargingvoltage": { "name": "Battery Stop Charging Voltage" },
       "gridmaxchargercurrentset": { "name": "Grid Max Charger Current" },
       "inverterbatterylowvoltage": { "name": "Battery Low Voltage (Inverter)" },
-      "maxcombinechargercurrent": { "name": "Max Combine Charger Current" }
+      "maxcombinechargercurrent": { "name": "Max Combine Charger Current" },
+      "socbacktogrid": { "name": "SOC Back To Grid" },
+      "socbacktobattery": { "name": "SOC Back To Battery" }
     },
     "select": {
       "batterytype": {

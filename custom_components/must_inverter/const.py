@@ -116,6 +116,9 @@ SENSORS_ARRAY = [
     Sensor(20142, "SystemSetting",                   None,    None,     Platform.SENSOR,               None,                              False, ),
     Sensor(20143, "ChargerSourcePriority",           None,    None,     Platform.SELECT,               None,                              True,  ),
     Sensor(20144, "SolarPowerBalance",               None,    None,     Platform.SWITCH,               None,                              True,  ),
+    # LOCAL PATCH 5 (2026-10-10): BMS SOC switch thresholds (already polled in 20101-20214)
+    Sensor(20147, "SocBackToGrid",                   1,       "%",      Platform.NUMBER,               None,                              True,  ),
+    Sensor(20148, "SocBackToBattery",                1,       "%",      Platform.NUMBER,               None,                              True,  ),
     Sensor(20213, "InverterRemoveTheAccumulatedData",None,    None,     Platform.BUTTON,               None,                              False, ),
     # Inverter Display Messages
     Sensor(25201, "WorkState",                       None,    None,     Platform.SENSOR,               SensorDeviceClass.ENUM,            True,  ),
@@ -300,7 +303,9 @@ RANGES = {
     "InverterOutputVoltageSet":       lambda data: Range(220,   240,    1   ),
     "InverterOutputFrequencySet":     lambda data: Range(50,    60,     10  ),
     "InverterMaxDischargerCurrent":   lambda data: Range(1,     13,     0.1 ),
-    "GridMaxChargerCurrentSet":       lambda data: Range(20,    30,     10  ),
+    "GridMaxChargerCurrentSet":       lambda data: Range(20,    40,     10  ),  # LOCAL PATCH 5: was 30 max
+    "SocBackToGrid":                  lambda data: Range(5,     50,     1   ),  # LOCAL PATCH 5
+    "SocBackToBattery":               lambda data: Range(20,    100,    1   ),  # LOCAL PATCH 5
     "MaxCombineChargerCurrent":       lambda data: Range(1,     80,     1   ),
     "InverterBatteryVoltageC":        lambda data: Range(0,     0xFFFF, 1   ),
     "InverterVoltageC":               lambda data: Range(0,     0xFFFF, 1   ),
