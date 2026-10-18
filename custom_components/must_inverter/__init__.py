@@ -1,5 +1,7 @@
 import asyncio
-import time
+# Aliased: HA sets this package's "time" attribute to the time.py platform once it
+# loads, which would shadow a plain "import time" (AttributeError on time.monotonic).
+import time as _stdlib_time
 from collections import deque
 import logging
 import contextlib
@@ -235,7 +237,7 @@ class MustInverter:
         self._reading = False
         self._bms_failures = 0
         # EXTENDED 1.0.1: mismatched-register handling (see _note_mismatch)
-        self._started = time.monotonic()
+        self._started = _stdlib_time.monotonic()
         self._mismatches = deque()
         self._good_reads = 0
         self._issue_raised = False
@@ -335,7 +337,7 @@ class MustInverter:
         raised after MISMATCH_COUNT mismatches within MISMATCH_WINDOW_S, ignoring the
         first STARTUP_GRACE_S after start, and cleared after CLEAR_AFTER_GOOD_READS good reads.
         """
-        now = time.monotonic()
+        now = _stdlib_time.monotonic()
         self._good_reads = 0
         self._needs_flush = True
         self._mismatches.append(now)

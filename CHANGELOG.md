@@ -4,6 +4,15 @@ All notable changes to **Must Inverter Extended** are listed here.
 Versions before 1.0.0 are the original [ha-must-inverter](https://github.com/mukaschultze/ha-must-inverter)
 releases by @mukaschultze - see its [releases page](https://github.com/mukaschultze/ha-must-inverter/releases).
 
+## [1.0.2] - 2026-10-18
+
+### Fixed
+- **`AttributeError: module 'custom_components.must_inverter.time' has no attribute 'monotonic'`**
+  logged when a register mismatch was seen. Home Assistant sets the package's `time` attribute to the
+  integration's own `time.py` platform once that platform loads, which shadowed the standard-library
+  `time` module used by the mismatch tracker. The standard library module is now imported under an
+  alias, so mismatch tracking (and the repair logic from 1.0.1) works after start-up.
+
 ## [1.0.1] - 2026-10-14
 
 ### Fixed
