@@ -4,6 +4,16 @@ All notable changes to **Must Inverter Extended** are listed here.
 Versions before 1.0.0 are the original [ha-must-inverter](https://github.com/mukaschultze/ha-must-inverter)
 releases by @mukaschultze - see its [releases page](https://github.com/mukaschultze/ha-must-inverter/releases).
 
+## [1.0.3] - 2026-10-21
+
+### Fixed
+- **"error reading modbus data at address ..." and "Task could not be canceled ... MustInverter._async_refresh"
+  logged on every Home Assistant restart.** Polling carried on while Home Assistant was shutting down, so
+  the last reads failed and one read task could not be cancelled. Polling now stops as soon as Home
+  Assistant starts shutting down; a read that is already running finishes quietly (logged at debug level).
+  Writes still work during shutdown, so an automation that writes a safe setting when Home Assistant stops
+  is not affected.
+
 ## [1.0.2] - 2026-10-18
 
 ### Fixed

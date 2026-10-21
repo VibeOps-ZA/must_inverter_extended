@@ -56,6 +56,7 @@ your existing devices, entities, dashboards and automations keep working unchang
 | Read stuck after an error | All later polls skipped until restart | Always recovers on the next poll |
 | Setup failure | Serial port stays locked until HA restarts | Port is closed, retry works (upstream PR #117) |
 | Inverter powered off at start-up | `KeyError` | Clean "no data" retry (upstream PR #117) |
+| Home Assistant restart | Polling continues during shutdown: modbus read errors and a read task HA can't cancel | Polling stops when shutdown starts; nothing logged |
 | Serial number | Passed as a number - breaks in **HA 2026.12** | Passed as text (upstream issue #119) |
 
 Full history: [CHANGELOG.md](CHANGELOG.md).

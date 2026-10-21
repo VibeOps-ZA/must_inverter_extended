@@ -10,7 +10,7 @@ from datetime import timedelta
 
 from homeassistant.helpers import config_validation as cv
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
@@ -154,6 +154,16 @@ async def _async_setup_inverter(hass: HomeAssistant, entry: ConfigEntry, inverte
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # EXTENDED 1.0.3: stop polling as soon as Home Assistant starts shutting down.
+    # Polls that kept running during shutdown failed ("error reading modbus data")
+    # and left a read task HA could not cancel. Writes (e.g. an automation that
+    # writes a safe value on shutdown) still work.
+    @callback
+    def _async_on_ha_stop(_event):
+        inverter.async_stop_polling()
+
+    entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, _async_on_ha_stop))
+
     # Removing register monitor as we've found all needed registers
     # If you need to add it back, uncomment the following lines and set the ranges to scan in register_monitor.py
     # monitor = RegisterMonitor(hass)
@@ -202,6 +212,8 @@ class MustInverter:
     def __init__(self, hass, entry: ConfigEntry):
         self._hass = hass
         self._callbacks = []  # Store callbacks separately
+        self._unsub_interval_method = None
+        self._stopping = False  # EXTENDED 1.0.3: set when Home Assistant is shutting down
         self._entry = entry
         # Check both data and options
 
@@ -261,11 +273,26 @@ class MustInverter:
 
         if not self._callbacks:
             """stop the interval timer upon removal of last sensor"""
-            self._unsub_interval_method()
-            self._unsub_interval_method = None
+            if self._unsub_interval_method:
+                self._unsub_interval_method()
+                self._unsub_interval_method = None
             self.close()
 
+    @callback
+    def async_stop_polling(self):
+        """Stop the poll timer because Home Assistant is shutting down (EXTENDED 1.0.3)."""
+        if self._stopping:
+            return
+        self._stopping = True
+        if self._unsub_interval_method:
+            self._unsub_interval_method()
+            self._unsub_interval_method = None
+        _LOGGER.debug("Home Assistant is stopping - inverter polling stopped")
+
     async def _async_refresh_modbus_data(self, now=None):
+        if self._stopping:
+            return False
+
         if not await self._check_and_reopen():
             # if not connected, skip
             _LOGGER.warning("not connected, skipping refresh")
@@ -481,6 +508,10 @@ class MustInverter:
                 # to prevent any potential issues
                 await asyncio.sleep(0.1)
 
+            if self._stopping:
+                # EXTENDED 1.0.3: Home Assistant is shutting down - don't start more reads
+                break
+
             start = register[0]
             end = register[1]
             count = end - start + 1
@@ -501,6 +532,8 @@ class MustInverter:
                 if response.isError():
                     if start == 113 and not self.has_extra_registers:
                         self._note_bms_failure(response)
+                    elif self._stopping:
+                        _LOGGER.debug("read at address %s failed during shutdown: %s", start, response)
                     else:
                         _LOGGER.error("error reading modbus data at address %s: %s", start, response)
                     self._needs_flush = True
@@ -530,6 +563,8 @@ class MustInverter:
                 self._needs_flush = True
                 if start == 113 and not self.has_extra_registers:
                     self._note_bms_failure("exception")
+                elif self._stopping:
+                    _LOGGER.debug("read at address %s failed during shutdown", start, exc_info=True)
                 else:
                     _LOGGER.error("error reading modbus data at address %s", start, exc_info=True)
 
