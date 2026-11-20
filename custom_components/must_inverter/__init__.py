@@ -4,7 +4,6 @@ import asyncio
 import time as _stdlib_time
 from collections import deque
 import logging
-import contextlib
 
 from datetime import timedelta
 
@@ -61,7 +60,6 @@ from .mapper import (
     convert_pv_data,
 )
 from .safeguards import block_reject_reason, serial_number_changed, write_refusal_reason
-# from .utils.register_monitor import RegisterMonitor
 
 PLATFORMS = [
     Platform.SENSOR,
@@ -178,26 +176,6 @@ async def _async_setup_inverter(hass: HomeAssistant, entry: ConfigEntry, inverte
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, _async_on_ha_stop))
 
-    # Removing register monitor as we've found all needed registers
-    # If you need to add it back, uncomment the following lines and set the ranges to scan in register_monitor.py
-    # monitor = RegisterMonitor(hass)
-
-    # Add monitoring to the update cycle, but at a slower rate
-    # async def delayed_monitor():
-    #     """Run monitor at a slower rate to avoid overwhelming the device."""
-    #     try:
-    #         while True:
-    #             await monitor.scan_ranges(inverter)
-    #             await asyncio.sleep(300)  # Run every 5 minutes
-    #     except asyncio.CancelledError:
-    #         _LOGGER.debug("Register monitor task cancelled")
-    #         raise
-
-    # monitor_task = asyncio.create_task(delayed_monitor())
-
-    # Store the task so we can cancel it later
-    # hass.data[DOMAIN][entry.entry_id]["monitor_task"] = monitor_task
-
     return True
 
 
@@ -206,12 +184,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
-        # Cancel the monitor task
-        if monitor_task := hass.data[DOMAIN][entry.entry_id].get("monitor_task"):
-            monitor_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await monitor_task
-
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok

@@ -71,7 +71,8 @@ Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ## What you need
 
-1. **Home Assistant** (2025.1 or newer). New to it? Start at
+1. **Home Assistant 2025.9 or newer** (older versions ship a Modbus library that is too old for
+   this integration). New to it? Start at
    [home-assistant.io/installation](https://www.home-assistant.io/installation/).
 2. **HACS** (the Home Assistant Community Store) to install and update this integration - see
    [hacs.xyz/docs/use](https://hacs.xyz/docs/use/). Manual install also works (below).
