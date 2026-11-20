@@ -120,3 +120,10 @@ def test_low_battery_warning(mapper, registers):
 def test_charger_fault(mapper, registers):
     registers[15213] = 1 << 6
     assert mapper.convert_partArr3(registers)["ChargerErrorMessage"] == "Battery voltage is too high"
+
+
+def test_charger_fault_bit_5_keeps_its_unconfirmed_text(mapper, registers):
+    # the text is from the PC1800 charge-controller table and unconfirmed for these
+    # inverters; it is documented as such and must not silently change
+    registers[15213] = 1 << 5
+    assert mapper.convert_partArr3(registers)["ChargerErrorMessage"] == "PV voltage is too low"

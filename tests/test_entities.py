@@ -282,8 +282,26 @@ def test_unknown_charging_state_keeps_its_raw_value(make_entities):
     assert charging.extra_state_attributes == {"raw_value": 2}
 
 
-def test_charging_state_labels_are_not_extended_by_guessing(const):
-    assert const.OPTIONS["ChargingState"] == ["stop", "absorb_charge", "float_charge", "equalization_charge"]
+def test_charging_state_3_is_unknown_not_equalization(make_entities):
+    # 3 is "EQ charge" only for PC1800 charge controllers; for these inverters it is undefined
+    inverter, _client, entities = make_entities()
+    charging = entities[uid("ChargingState")]
+    inverter.data["ChargingState"] = 3
+
+    assert charging.state is None
+    assert charging.extra_state_attributes == {"raw_value": 3}
+    assert "equalization_charge" not in charging._attr_options
+
+
+@pytest.mark.parametrize(("raw", "shown"), [(0, "stop"), (1, "absorb_charge"), (2, "float_charge")])
+def test_documented_charging_states_are_unchanged(make_entities, raw, shown):
+    inverter, _client, entities = make_entities()
+    inverter.data["ChargingState"] = raw
+    assert entities[uid("ChargingState")].state == shown
+
+
+def test_charging_state_has_only_the_three_documented_labels(const):
+    assert const.OPTIONS["ChargingState"] == ["stop", "absorb_charge", "float_charge"]
 
 
 def test_only_state_sensors_get_the_raw_value(make_entities):

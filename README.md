@@ -67,7 +67,7 @@ your existing devices, entities, dashboards and automations keep working unchang
 | Diagnostics download | Contains the serial number in the raw registers | Serial number hidden |
 | Inverter off, unplugged or not answering | Every entity keeps its last value for ever | Entities turn *unavailable* after 5 missed polls; a **Connected** sensor shows whether the inverter answers |
 | Calibration values | Can be changed like any other number once enabled | Write-protected unless an expert option is turned on |
-| Charging state without a documented meaning (5, 8) | `IndexError` | *unknown*, with the raw number in the attribute `raw_value` |
+| Charging state without a documented meaning (3, 5, 8) | `IndexError` for 5 and 8; 3 shown as "Equalization charge" | *unknown*, with the raw number in the attribute `raw_value` |
 | Battery SoC / SoH after an outage of 45 seconds | - | Read again when the inverter is back (was frozen until a restart) |
 
 Full history: [CHANGELOG.md](CHANGELOG.md).
@@ -304,7 +304,8 @@ please open an issue with your results.
 | 44180 | Reported for PH18 + Pylontech as SoC; returns 0 on PV18. |
 | 15104-15119 | PH1100 BMS block - all zeros on PV18. |
 | 15202 | MPPT on/off state. |
-| 15203 | Charging state. Undocumented values: **5** while MPPT (15202) = 1, **3** while MPPT = 0 near full (charger cycling at the BMS limit), **8** once when SoC reached 100 %. |
+| 15203 | Charging state. Defined for these inverters: 0 stop, 1 absorb charge, 2 float charge. Undocumented values seen: **5** while MPPT (15202) = 1, **3** while MPPT = 0 near full (charger cycling at the BMS limit), **8** once when SoC reached 100 %. They show as *unknown*, with the number in `raw_value`. (3 means "EQ charge" only on PC1800 solar charge controllers; it was shown as "Equalization charge" here before 1.1.0.) |
+| 15213 bit 5 | Shown as charger error "PV voltage is too low". This text comes from the PC1800 charge-controller table and is **not confirmed** for these inverters - do not rely on it alone. |
 | 20117 | Low-battery warning voltage (= switch-to-grid voltage 20118 - 0.3 V). |
 | 20145 / 20146 | Probably SOC-mode enable (1) and low-SOC cut-off (10 %). Not exposed. |
 | 20147 / 20148 | SOC back to grid / back to battery (%). The inverter switches to grid when SoC <= 20147 and, once latched, stays on grid while SoC < 20148. Lowering 20148 below the current SoC releases back to battery after ~8-9 minutes. |
@@ -337,7 +338,7 @@ Other observations:
 | Log says "ignoring an implausible answer ... every register is 0" | The inverter answered with empty data and the integration kept the last real values. If it does not stop, the inverter has probably shut itself down: switch off PV, grid and battery, wait a minute, and switch it back on. |
 | Changing a setting fails with "The inverter refused to write ..." | The inverter did not accept that value (out of its own limits, or not allowed in the current mode). Nothing was changed. |
 | All inverter entities are *unavailable* and *Connected* is off | The inverter has not answered for 5 reads in a row. Check that it is on, the cable is plugged in at both ends, and nothing else uses the port. Everything comes back by itself with the first answer. |
-| *Charging state* shows *unknown* | The inverter sent a number that the Must documentation does not explain (5 and 8 were seen on a PV18-4024PREM with a lithium BMS). The number is in the sensor's `raw_value` attribute. |
+| *Charging state* shows *unknown* | The inverter sent a number that the Must documentation does not explain (3, 5 and 8 were seen on a PV18-4024PREM with a lithium BMS). The number is in the sensor's `raw_value` attribute. Only 0 (stop), 1 (absorb charge) and 2 (float charge) are defined for these inverters. |
 | Changing a *Calibration ...* number fails with "write-protected" | Intended - see [Safety](#safety---read-this-before-changing-settings). |
 | More detail needed | Add to `configuration.yaml`: `logger: { logs: { custom_components.must_inverter: debug } }` and restart. |
 

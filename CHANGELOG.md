@@ -17,7 +17,7 @@ Needs **Home Assistant 2025.9 or newer**. One Home Assistant restart is needed a
   on. Attribute `missed_polls` counts from 0 to 5.
 - **Raw value on state sensors.** *Charging state*, *MPPT state*, *Charger work state* and *Work
   state* carry the number the inverter sent in the attribute `raw_value`. Values without a
-  documented meaning (charging state 5 and 8 on a PV18-4024PREM) still show as *unknown* - no label
+  documented meaning (charging state 3, 5 and 8 on a PV18-4024PREM) show as *unknown* - no label
   is guessed - but the number is no longer lost.
 - **Allow calibration writes (expert)** option, off by default (Configure > PyModbus advanced
   settings).
@@ -36,6 +36,16 @@ Needs **Home Assistant 2025.9 or newer**. One Home Assistant restart is needed a
   answers again. One or two missed polls change nothing.
   **Check your automations and templates:** a numeric condition on an unavailable entity is false,
   and templates should use a default, e.g. `states('sensor.x') | float(0)`.
+- **Charging state 3 is no longer shown as "Equalization charge".** For these inverters only 0
+  (stop), 1 (absorb charge) and 2 (float charge) are defined - in the Must protocol document and,
+  as reported from the vendor's SolarPowerMonitor 2.2.81, in its table for this inverter family;
+  "EQ charge" for 3 exists only in its table for PC1800 solar charge controllers. On a
+  PV18-4024PREM, 3 appears with the MPPT off near full charge, not during equalization. It now
+  shows as *unknown*, like 5 and 8, with the number in `raw_value`. Nothing else changes: the
+  entity and its id are the same, the sensor has no long-term statistics, and history recorded
+  earlier still reads "Equalization charge". **If an automation waits for the state
+  `equalization_charge`, it will no longer trigger** - use the attribute instead, e.g.
+  `state_attr('sensor.your_inverter_charging_state', 'raw_value') == 3`.
 - **Calibration values are write-protected.** The eight calibration numbers (disabled by default)
   change how the inverter measures its own voltages and currents. Changing one is now refused with
   an explanation unless the new expert option is on.
@@ -92,6 +102,10 @@ Needs **Home Assistant 2025.9 or newer**. One Home Assistant restart is needed a
   3 polls (45 seconds), the integration concluded that there was no BMS and stopped reading
   registers 113-114 until Home Assistant was restarted - the last percentage stayed on screen.
   Failed reads now only count while the rest of the inverter answers.
+
+### Known limitation
+- The charger error text "PV voltage is too low" (register 15213, bit 5) comes from the table for
+  PC1800 solar charge controllers and is not confirmed for these inverters. It is shown as before.
 
 ### Removed
 - The unused register monitor (`utils/register_monitor.py`, never started) and the `aiofiles`

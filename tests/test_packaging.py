@@ -75,3 +75,10 @@ def test_readme_does_not_promise_an_older_home_assistant():
     readme = (REPO_ROOT / "README.md").read_text()
     assert "Home Assistant 2025.9 or newer" in readme
     assert "(2025.1 or newer)" not in readme
+
+
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_old_charging_state_name_is_still_translated(language):
+    # "equalization_charge" is no longer produced, but history recorded before 1.1.0 holds it
+    texts = _json(COMPONENT_DIR / "translations" / f"{language}.json")
+    assert texts["entity"]["sensor"]["chargingstate"]["state"]["equalization_charge"]
