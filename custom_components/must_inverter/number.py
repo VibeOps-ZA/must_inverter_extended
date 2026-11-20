@@ -3,7 +3,7 @@ from typing import Any
 
 from homeassistant.components.number import NumberEntity
 from homeassistant.core import callback
-from homeassistant.const import Platform
+from homeassistant.const import EntityCategory, Platform
 from homeassistant.exceptions import PlatformNotReady
 
 from .const import DOMAIN, RANGES, Sensor
@@ -36,6 +36,7 @@ class MustInverterNumber(NumberEntity):
         self._coeff = sensor_info.coeff or 1
 
         self._attr_has_entity_name = True
+        self._attr_entity_category = EntityCategory.CONFIG  # EXTENDED 1.1.0: a setting
         self._attr_unique_id = f"{self._inverter.data['InverterSerialNumber']}_{self._key}"
         self._attr_translation_key = self._key.lower()
         self._attr_native_unit_of_measurement = sensor_info.unit

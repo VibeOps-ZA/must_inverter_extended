@@ -275,6 +275,37 @@ PH1100_SENSORS = [
 ]
 # fmt: on
 
+# EXTENDED 1.1.0: sensors that describe the inverter or repeat a setting rather than
+# measure something. They get the entity category "diagnostic": same entity ids, but they
+# are listed under "Diagnostic" on the device page and are not offered to voice assistants
+# or put on automatically generated dashboards. (Numbers, selects, switches, buttons and
+# time entities - the settings - get the category "config" in their own files.)
+DIAGNOSTIC_SENSORS = frozenset(
+    {
+        # identity
+        "InverterMachineType",
+        "InverterSerialNumber",
+        "InverterHardwareVersion",
+        "InverterSoftwareVersion",
+        # fixed ratings
+        "BattVolGrade",
+        "RatedCurrent",
+        "AcVoltageGrade",
+        "RatedPower",
+        "RatedPowerW",
+        # parallel operation
+        "InverterMaxNumber",
+        "CombineType",
+        "InverterNumber",
+        # settings that can only be read
+        "SystemSetting",
+        "AbsorbVoltage",
+        "BatteryHighVoltage",
+        "AbsorbChargerCurrent",
+        "InverterBatteryHighVoltage",
+    }
+)
+
 OPTIONS = {
     "EnergyUseMode": ["", "sbu", "sub", "uti", "sol"],
     "GridProtectStandard": ["vde4105", "ups", "apl", "gen"],

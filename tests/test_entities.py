@@ -291,3 +291,54 @@ def test_only_state_sensors_get_the_raw_value(make_entities):
     assert entities[uid("WorkState")].extra_state_attributes == {"raw_value": 2}
     assert entities[uid("InverterBatteryVoltage")].extra_state_attributes is None
     assert entities[uid("InverterErrorMessage")].extra_state_attributes is None
+
+
+# --- entity categories ---------------------------------------------------------------------------
+
+SETTING_CLASSES = ("MustInverterNumber", "MustInverterSelect", "MustInverterSwitch", "MustInverterSettingsSwitch")
+SETTING_CLASSES += ("MustInverterButton", "MustInverterTime")
+SENSOR_CLASSES = ("MustInverterSensor", "MustRawRegisterSensor", "MustBatteryFlowSensor")
+SENSOR_CLASSES += ("MustInverterBinarySensor", "MustInverterConnectedSensor")
+
+
+def category(entity):
+    return getattr(entity, "_attr_entity_category", None)
+
+
+def test_every_setting_is_in_the_config_category(make_entities):
+    _inverter, _client, entities = make_entities()
+    settings = [entity for entity in entities.values() if type(entity).__name__ in SETTING_CLASSES]
+    assert len(settings) == 27 + 5 + 18 + 2  # numbers, selects, switches, buttons (no time entities on pv1800)
+    for entity in settings:
+        assert category(entity) == "config", entity._attr_unique_id
+
+
+def test_sensors_are_diagnostic_or_uncategorised_never_config(make_entities):
+    # Home Assistant refuses sensors and binary sensors with the "config" category
+    _inverter, _client, entities = make_entities()
+    for entity in entities.values():
+        if type(entity).__name__ in SENSOR_CLASSES:
+            assert category(entity) in (None, "diagnostic"), entity._attr_unique_id
+
+
+def test_diagnostic_sensors(make_entities, const):
+    _inverter, _client, entities = make_entities()
+    for key in const.DIAGNOSTIC_SENSORS:
+        assert category(entities[uid(key)]) == "diagnostic", key
+    assert category(entities[uid("Connected")]) == "diagnostic"
+    assert category(entities[uid("raw_15203")]) == "diagnostic"
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["InverterBatteryVoltage", "StateOfCharge", "PLoad", "AccumulatedLoadPower", "WorkState", "ChargingState"]
+    + ["InverterErrorMessage", "InverterWarningMessage", "ChargerErrorMessage", "GridRelayState", "BatteryChargePower"],
+)
+def test_measurements_and_fault_messages_stay_uncategorised(make_entities, key):
+    _inverter, _client, entities = make_entities()
+    assert category(entities[uid(key)]) is None
+
+
+def test_diagnostic_names_are_real_sensor_definitions(const):
+    sensors = {sensor.name for sensor in const.SENSORS_ARRAY if sensor.platform == "sensor"}
+    assert sensors >= const.DIAGNOSTIC_SENSORS

@@ -4,7 +4,7 @@ from datetime import time
 
 from homeassistant.components.time import TimeEntity
 from homeassistant.core import callback
-from homeassistant.const import Platform
+from homeassistant.const import EntityCategory, Platform
 
 from .const import DOMAIN, Sensor
 from .__init__ import MustInverter
@@ -35,6 +35,7 @@ class MustInverterTime(TimeEntity):
         self._address = sensor_info.address
 
         self._attr_has_entity_name = True
+        self._attr_entity_category = EntityCategory.CONFIG  # EXTENDED 1.1.0: a setting
         self._attr_unique_id = f"{self._inverter.data['InverterSerialNumber']}_{self._key}"
         self._attr_translation_key = self._key.lower()
         self._attr_entity_registry_enabled_default = sensor_info.enabled
