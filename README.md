@@ -119,13 +119,51 @@ Wiring photos, pin-outs and many working setups are collected in the original pr
 4. Find **Must Inverter Extended** in HACS and click **Download**.
 5. **Restart Home Assistant** (Settings > System > three dots > Restart).
 
-### Manual
+### Manual (public releases)
 
 1. Download `must_inverter.zip` from the
    [latest release](https://github.com/VibeOps-ZA/must_inverter_extended/releases/latest).
 2. Unzip it into `config/custom_components/must_inverter/` (create the folders if needed), so you
    end up with `config/custom_components/must_inverter/__init__.py` and friends.
 3. Restart Home Assistant.
+
+### Private repository: install or update by copying the folder (how the owner does it)
+
+This repository is **private**. [HACS](https://hacs.xyz/docs/use/) can *track* a private repository (it shows that a
+new version exists) but **cannot download** it: its downloads use anonymous GitHub addresses, which answer "404" for
+a private repository. "Download ZIP" and release links also need a GitHub login. So install by copying the integration
+folder onto Home Assistant yourself. Never switch the repository to public just to make HACS work.
+
+1. **Make a backup first:** **Settings -> System -> Backups** ([Home Assistant backup docs](https://www.home-assistant.io/integrations/backup/)).
+2. **Get the code** on a computer you trust that has access to the `VibeOps-ZA` GitHub account. The version running at the
+   owner's home is the branch `feature/1.1.0`:
+   ```bash
+   git clone --branch feature/1.1.0 https://github.com/VibeOps-ZA/must_inverter_extended.git
+   ```
+   GitHub asks for a user name and a **personal access token** as the password (a token with read-only access to this
+   repository is enough; [how to create one](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)).
+   Never paste the token into a file in this repository.
+3. **Make Home Assistant reachable over SSH** (a command-line login) with the
+   [Advanced SSH & Web Terminal app](https://github.com/hassio-addons/addon-ssh) (add it from the app store and give it
+   your public key in its configuration), or the operating system's own SSH described in the
+   [Home Assistant developer docs](https://developers.home-assistant.io/docs/operating-system/debugging/).
+   In the commands below replace `HA_USER` and `HA_HOST` with your SSH user and Home Assistant's address.
+4. **Copy the folder** (the old copy is removed first so deleted files do not linger; check the path twice, the
+   `rm` removes only this one integration's folder):
+   ```bash
+   ssh HA_USER@HA_HOST 'rm -rf /config/custom_components/must_inverter'
+   scp -r must_inverter_extended/custom_components/must_inverter HA_USER@HA_HOST:/config/custom_components/
+   ```
+   `/config` is Home Assistant's configuration folder (the one containing `configuration.yaml`). Your devices,
+   entities and settings are stored inside Home Assistant, not in this folder, so nothing is lost.
+5. **Restart Home Assistant** (**Settings -> System -> power icon -> Restart Home Assistant**). Home Assistant loads
+   integration code only when it starts, so a restart is needed after every install or update.
+6. **Check the version:** open `/config/custom_components/must_inverter/manifest.json` (`"version": "1.1.0"` for this
+   release) or look under **Settings -> Devices & services**.
+
+**At the owner's home** steps 2-4 are run from the AI Pi host (`ai-pi`), which already holds the GitHub token and the SSH
+access to Home Assistant, so nothing secret is typed or stored in this repository. Changes are made on a branch,
+installed from it for testing, and merged to `main` only after the owner's OK.
 
 ---
 
@@ -183,7 +221,7 @@ entities live in Home Assistant, not in the integration files, so nothing is los
 | --- | --- | --- |
 | Timeout | Seconds to wait for each answer. | `2.0` |
 | Retries | Retries per request before giving up. | `3` |
-| Reconnect delay / max | Seconds before reconnecting after a dropped connection (grows up to "max"). | `0.3` / `1.0` |
+| Reconnect delay / max | Seconds before reconnecting after a dropped connection (the delay doubles after each failed attempt, up to "max"). A delay of `0` turns reconnecting off. | `0.3` / `1.0` |
 | Device ID | Modbus slave address of the inverter. Must inverters use **4**. | `4` |
 | Allow calibration writes (expert) | Leave **off**. Only while this is on can the eight *Calibration ...* numbers be changed; they alter how the inverter measures its own voltages and currents (see [Safety](#safety---read-this-before-changing-settings)). | off |
 
@@ -393,6 +431,13 @@ If the repair keeps coming back, check:
    WiFi/RS485 dongle polling the same inverter port at the same time.
 2. **Cabling.** Short, good-quality USB/RS485 cable; no loose connectors.
 3. **Timeout/retries** in the integration options: raise the timeout if your link is slow.
+
+## Repair: No serial number set
+
+Some inverters have no serial number stored. Home Assistant then shows the repair **No serial number set**, because
+two such inverters could not be told apart. Open the repair: it offers to **write a serial number to the inverter**.
+Type the number printed on the side of the inverter, or leave the suggested random value. This does not change how the
+inverter works. It is only needed if you add more than one inverter; with a single inverter you can ignore it.
 
 ## License
 
