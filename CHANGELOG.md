@@ -4,16 +4,14 @@ All notable changes to **Must Inverter Extended** are listed here.
 Versions before 1.0.0 are the original [ha-must-inverter](https://github.com/mukaschultze/ha-must-inverter)
 releases by @mukaschultze - see its [releases page](https://github.com/mukaschultze/ha-must-inverter/releases).
 
-## [Unreleased]
+## [1.1.0] - 2026-11-20
 
 ### Docs - 2026-11-20 (docs pass, no code change)
 - README: "Private repository" install/update route (HACS can track but not download a private repository; copy the folder
   over SSH, with links to the official Home Assistant, HACS and SSH-app docs); reconnect-delay option explained fully
   (0 = off); the "No serial number set" repair documented.
 - This 1.1.0 entry said "unreleased": 1.1.0 is installed on the owner's Home Assistant (branch `feature/1.1.0`, commit
-  02dd8f2, 2026-11-20) but not yet merged to `main` or tagged.
-
-## [1.1.0] - unreleased
+  02dd8f2, 2026-11-20); merged to `main` and tagged `v1.1.0` on 2026-11-20 (D250).
 
 Reliability and safety release after a full code review. **No entity is renamed or removed and
 every existing entity id and unique id stays exactly as it was.** One entity is added (*Connected*).
