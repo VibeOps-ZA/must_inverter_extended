@@ -186,6 +186,15 @@ class MustInverterSensor(SensorEntity):
             return value * self._coeff
 
     @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        # EXTENDED 1.1.0: state sensors (charging state, work state ...) also give the number
+        # the inverter sent. A value without a documented meaning shows as "unknown"; the
+        # number stays visible here so it can be looked up or used in an automation.
+        if self._attr_options is None or self._key not in self._inverter.data:
+            return None
+        return {"raw_value": self._inverter.data[self._key]}
+
+    @property
     def device_info(self) -> dict[str, Any] | None:
         return self._inverter._device_info()
 

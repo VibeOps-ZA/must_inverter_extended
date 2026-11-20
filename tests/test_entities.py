@@ -262,3 +262,32 @@ def test_normal_settings_are_not_affected_by_the_write_protection(make_entities)
     asyncio.run(entities[uid("SolarPowerBalance")].async_turn_on())
     assert client.writes == [(10103, 276), (20109, 3), (20144, 1)]
     assert inverter.data["EnergyUseMode"] == 3
+
+
+# --- raw value of state sensors ------------------------------------------------------------------
+
+
+def test_unknown_charging_state_keeps_its_raw_value(make_entities):
+    inverter, _client, entities = make_entities()
+    charging = entities[uid("ChargingState")]
+    assert charging.state is None  # 5 has no documented meaning: no label is guessed
+    assert charging.extra_state_attributes == {"raw_value": 5}
+
+    inverter.data["ChargingState"] = 8
+    assert charging.state is None
+    assert charging.extra_state_attributes == {"raw_value": 8}
+
+    inverter.data["ChargingState"] = 2
+    assert charging.state == "float_charge"
+    assert charging.extra_state_attributes == {"raw_value": 2}
+
+
+def test_charging_state_labels_are_not_extended_by_guessing(const):
+    assert const.OPTIONS["ChargingState"] == ["stop", "absorb_charge", "float_charge", "equalization_charge"]
+
+
+def test_only_state_sensors_get_the_raw_value(make_entities):
+    _inverter, _client, entities = make_entities()
+    assert entities[uid("WorkState")].extra_state_attributes == {"raw_value": 2}
+    assert entities[uid("InverterBatteryVoltage")].extra_state_attributes is None
+    assert entities[uid("InverterErrorMessage")].extra_state_attributes is None
