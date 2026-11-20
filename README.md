@@ -35,12 +35,13 @@ your existing devices, entities, dashboards and automations keep working unchang
 5. [Switching from the original integration](#switching-from-the-original-integration)
 6. [Setting it up (every option explained)](#setting-it-up-every-option-explained)
 7. [What you get (entities)](#what-you-get-entities)
-8. [Battery in the Energy dashboard](#battery-in-the-energy-dashboard)
-9. [Safety - read this before changing settings](#safety---read-this-before-changing-settings)
-10. [Register findings (for other models and researchers)](#register-findings-for-other-models-and-researchers)
-11. [Troubleshooting](#troubleshooting)
-12. [For developers: running the tests](#for-developers-running-the-tests)
-13. [Acknowledgments](#acknowledgments), [Repair: Mismatched Modbus Registers](#repair-mismatched-modbus-registers)
+8. [Is the inverter answering?](#is-the-inverter-answering)
+9. [Battery in the Energy dashboard](#battery-in-the-energy-dashboard)
+10. [Safety - read this before changing settings](#safety---read-this-before-changing-settings)
+11. [Register findings (for other models and researchers)](#register-findings-for-other-models-and-researchers)
+12. [Troubleshooting](#troubleshooting)
+13. [For developers: running the tests](#for-developers-running-the-tests)
+14. [Acknowledgments](#acknowledgments), [Repair: Mismatched Modbus Registers](#repair-mismatched-modbus-registers)
     and [License](#license)
 
 ---
@@ -64,6 +65,10 @@ your existing devices, entities, dashboards and automations keep working unchang
 | Inverter answers "all zeroes" (after it shut itself down) | Taken as real: serial number 0, energy totals 0, then counted twice in the Energy dashboard | Ignored - previous values are kept, a warning is logged |
 | A setting the inverter refuses | Looks like it worked | The action fails with an error message |
 | Diagnostics download | Contains the serial number in the raw registers | Serial number hidden |
+| Inverter off, unplugged or not answering | Every entity keeps its last value for ever | Entities turn *unavailable* after 5 missed polls; a **Connected** sensor shows whether the inverter answers |
+| Calibration values | Can be changed like any other number once enabled | Write-protected unless an expert option is turned on |
+| Charging state without a documented meaning (5, 8) | `IndexError` | *unknown*, with the raw number in the attribute `raw_value` |
+| Battery SoC / SoH after an outage of 45 seconds | - | Read again when the inverter is back (was frozen until a restart) |
 
 Full history: [CHANGELOG.md](CHANGELOG.md).
 
@@ -180,6 +185,7 @@ entities live in Home Assistant, not in the integration files, so nothing is los
 | Retries | Retries per request before giving up. | `3` |
 | Reconnect delay / max | Seconds before reconnecting after a dropped connection (grows up to "max"). | `0.3` / `1.0` |
 | Device ID | Modbus slave address of the inverter. Must inverters use **4**. | `4` |
+| Allow calibration writes (expert) | Leave **off**. Only while this is on can the eight *Calibration ...* numbers be changed; they alter how the inverter measures its own voltages and currents (see [Safety](#safety---read-this-before-changing-settings)). | off |
 
 You can change all of these later under the integration's **Configure** button.
 
@@ -202,9 +208,49 @@ Entity names depend on your model. Typical groups:
 - **Diagnostic "Raw register N"** (extended, disabled by default) - raw values of registers the
   integration already reads but does not decode yet. Useful for decoding new features; they cause
   **no** extra Modbus traffic.
+- **Connected** (extended) - a binary sensor that is on while the inverter answers. See
+  [Is the inverter answering?](#is-the-inverter-answering) below.
+
+On the device page the entities are grouped: measurements under **Sensors**, everything you can
+change under **Configuration**, and descriptive values (model, serial number, versions, ratings,
+*Connected*, raw registers) under **Diagnostic**.
+
+The state sensors *Charging state*, *MPPT state*, *Charger work state* and *Work state* also carry
+the number the inverter sent, in the attribute `raw_value` (open the entity and expand
+**Attributes**). If the inverter sends a number that has no documented meaning, the sensor shows
+*unknown* and the number is still there.
 
 To enable a disabled entity: **Settings > Devices & services > Must Inverter > (your device) >**
 "*+N entities not shown*" > pick the entity > **Settings (cog) > Enabled**.
+
+---
+
+## Is the inverter answering?
+
+Home Assistant reads the inverter every *scan interval* (15 seconds by default). Sometimes a read
+fails - the cable is unplugged, the inverter is switched off, or Home Assistant is busy.
+
+- **One to four failed reads in a row:** nothing changes. The entities keep their last value.
+- **Five failed reads in a row** (75 seconds by default): the values are too old to trust. The
+  entities show **unavailable** and the **Connected** binary sensor turns **off**. As soon as the
+  inverter answers again, everything comes back by itself.
+- If only one group of values stops answering (for example the battery management system), only
+  the entities of that group turn unavailable; *Connected* stays on.
+
+To be told when the inverter goes offline, create an automation
+([Home Assistant automation basics](https://www.home-assistant.io/docs/automation/basics/)):
+
+1. **Settings > Automations & scenes > Create automation > Create new automation.**
+2. **When:** *Entity* > *State*, entity **Connected** of your inverter, **To:** *Disconnected*,
+   **For:** 2 minutes.
+3. **Then do:** *Notifications* > *Send a notification* to your phone
+   ([companion app](https://companion.home-assistant.io/docs/notifications/notifications-basic/)),
+   with a message such as "The inverter is not answering".
+4. Save.
+
+If you use values of this integration in your own automations or templates, remember that they can
+now be *unavailable*: give templates a default, e.g.
+`{{ states('sensor.your_inverter_battery_state_of_charge') | float(0) }}`.
 
 ---
 
@@ -229,6 +275,14 @@ Home Assistant's Energy dashboard wants *energy* (kWh) for battery charge and di
   (number, select, switch, time, button).
 - Some settings (especially **calibration** values) cannot be easily undone and can upset the
   inverter. They are disabled by default - leave them alone unless you know exactly why.
+- The eight **Calibration ...** numbers are also **write-protected**: changing one is refused
+  until you turn on *Allow calibration writes (expert)* under the integration's **Configure**
+  button. They tell the inverter how to correct its own voltage and current measurements; a wrong
+  battery-voltage calibration makes it charge the battery too high or too low. Turn the option off
+  again when you are done.
+- The two **Remove accumulated data** buttons (disabled by default) erase the inverter's lifetime
+  energy counters. This cannot be undone.
+- **Battery equalization** is meant for lead-acid batteries. Leave it off for lithium batteries.
 - **Note your settings first.** Write down (or screenshot) every number/select value before you
   experiment, so you can restore them. Some inverters reset to factory defaults after certain
   writes.
@@ -282,6 +336,9 @@ Other observations:
 | Settings changed by themselves | Some Must firmware resets settings after certain writes - restore from your notes. |
 | Log says "ignoring an implausible answer ... every register is 0" | The inverter answered with empty data and the integration kept the last real values. If it does not stop, the inverter has probably shut itself down: switch off PV, grid and battery, wait a minute, and switch it back on. |
 | Changing a setting fails with "The inverter refused to write ..." | The inverter did not accept that value (out of its own limits, or not allowed in the current mode). Nothing was changed. |
+| All inverter entities are *unavailable* and *Connected* is off | The inverter has not answered for 5 reads in a row. Check that it is on, the cable is plugged in at both ends, and nothing else uses the port. Everything comes back by itself with the first answer. |
+| *Charging state* shows *unknown* | The inverter sent a number that the Must documentation does not explain (5 and 8 were seen on a PV18-4024PREM with a lithium BMS). The number is in the sensor's `raw_value` attribute. |
+| Changing a *Calibration ...* number fails with "write-protected" | Intended - see [Safety](#safety---read-this-before-changing-settings). |
 | More detail needed | Add to `configuration.yaml`: `logger: { logs: { custom_components.must_inverter: debug } }` and restart. |
 
 Bugs and ideas: [open an issue](https://github.com/VibeOps-ZA/must_inverter_extended/issues).
