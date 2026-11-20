@@ -46,6 +46,7 @@ ChargerWorkEnable
 ChargerWorkstate
 ChargingState
 CombineType
+Connected
 ControlCurrent
 ControlCurrentC
 DCRelayState

@@ -102,8 +102,9 @@ class MustInverterSwitch(SwitchEntity):
         return self._inverter._device_info()
 
     @property
-    def available(self) -> dict[str, Any] | None:
-        return self._key in self._inverter.data
+    def available(self) -> bool:
+        # EXTENDED 1.1.0: not available either when the value has become too old
+        return self._inverter.has_fresh(self._key)
 
 
 class MustInverterSettingsSwitch(SwitchEntity):
@@ -170,5 +171,6 @@ class MustInverterSettingsSwitch(SwitchEntity):
         return self._inverter._device_info()
 
     @property
-    def available(self) -> dict[str, Any] | None:
-        return "SystemSetting" in self._inverter.data
+    def available(self) -> bool:
+        # EXTENDED 1.1.0: not available either when the value has become too old
+        return self._inverter.has_fresh("SystemSetting")

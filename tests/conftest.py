@@ -10,6 +10,7 @@ Run from the repository root with:  python3 -m pytest
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import json
@@ -62,6 +63,17 @@ class _HomeAssistantError(Exception):
     pass
 
 
+class _Entity:
+    """Stand-in for Home Assistant's entity base classes."""
+
+    def async_write_ha_state(self) -> None:
+        """Do nothing: there is no Home Assistant to write to."""
+
+
+def _entity_class(name: str) -> type:
+    return type(name, (_Entity,), {})
+
+
 class _StubModbusClient:
     """Stand-in for the pymodbus clients; the tests replace it with their own fake."""
 
@@ -79,6 +91,8 @@ def _install_home_assistant_stand_ins() -> None:
         "homeassistant.const",
         Platform=_Names,
         EntityCategory=_Names,
+        UnitOfEnergy=type("UnitOfEnergy", (), {"KILO_WATT_HOUR": "kWh"}),
+        UnitOfPower=type("UnitOfPower", (), {"WATT": "W"}),
         EVENT_HOMEASSISTANT_STOP="homeassistant_stop",
         CONF_NAME="name",
         CONF_DEVICE="device",
@@ -107,9 +121,22 @@ def _install_home_assistant_stand_ins() -> None:
     )
     _module("homeassistant.helpers.event", async_track_time_interval=lambda *args, **kwargs: lambda: None)
     _module("homeassistant.components")
-    _module("homeassistant.components.binary_sensor", BinarySensorDeviceClass=_Names)
-    _module("homeassistant.components.number", NumberDeviceClass=_Names)
-    _module("homeassistant.components.sensor", SensorDeviceClass=_Names)
+    _module(
+        "homeassistant.components.binary_sensor",
+        BinarySensorDeviceClass=_Names,
+        BinarySensorEntity=_entity_class("BinarySensorEntity"),
+    )
+    _module("homeassistant.components.number", NumberDeviceClass=_Names, NumberEntity=_entity_class("NumberEntity"))
+    _module(
+        "homeassistant.components.sensor",
+        SensorDeviceClass=_Names,
+        SensorStateClass=_Names,
+        SensorEntity=_entity_class("SensorEntity"),
+    )
+    _module("homeassistant.components.select", SelectEntity=_entity_class("SelectEntity"))
+    _module("homeassistant.components.switch", SwitchEntity=_entity_class("SwitchEntity"))
+    _module("homeassistant.components.button", ButtonEntity=_entity_class("ButtonEntity"))
+    _module("homeassistant.components.time", TimeEntity=_entity_class("TimeEntity"))
 
 
 def _install_pymodbus_stand_ins() -> None:
@@ -161,10 +188,11 @@ class FakeClient:
         self.reads: list = []
         self.writes: list = []
         self.refuse_writes = False
+        self.unplugged = False
 
     async def connect(self) -> bool:
-        self.connected = True
-        return True
+        self.connected = not self.unplugged
+        return self.connected
 
     def close(self) -> None:
         self.connected = False
@@ -272,5 +300,43 @@ def make_inverter(must, frame, issues, monkeypatch):
         client.answers = {int(start): list(values) for start, values in frame.items()}
         inverter._client = client
         return inverter, client
+
+    return build
+
+
+ENTITY_PLATFORMS = ["sensor", "binary_sensor", "number", "select", "switch", "button", "time"]
+
+
+@pytest.fixture
+def make_entities(make_inverter, must, const):
+    """Build the inverter, poll once and create every entity the way Home Assistant would.
+
+    Returns (inverter, client, {unique_id: entity}).
+    """
+
+    def build(model: str = "pv1800", **options):
+        inverter, client = make_inverter(model, **options)
+        assert asyncio.run(inverter.read_modbus_data()) is True
+
+        # same rule as _async_setup_inverter(): PV1800 also gets battery SoC/SoH
+        sensors = list(const.get_sensors_for_model(inverter.model))
+        if inverter.model not in (const.MODEL_PV1900, const.MODEL_PH1100):
+            have = {sensor.name for sensor in sensors}
+            sensors += [
+                sensor
+                for sensor in const.get_sensors_for_model(const.MODEL_PV1900)
+                if sensor.name in must.BATTERY_STATUS_KEYS and sensor.name not in have
+            ]
+
+        hass = types.SimpleNamespace(data={const.DOMAIN: {"test-entry": {"inverter": inverter, "sensors": sensors}}})
+        entry = types.SimpleNamespace(entry_id="test-entry")
+        found: list = []
+        for platform in ENTITY_PLATFORMS:
+            module = importlib.import_module(f"{PACKAGE}.{platform}")
+            asyncio.run(module.async_setup_entry(hass, entry, found.extend))
+
+        by_unique_id = {entity._attr_unique_id: entity for entity in found}
+        assert len(by_unique_id) == len(found), "two entities share a unique id"
+        return inverter, client, by_unique_id
 
     return build

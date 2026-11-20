@@ -181,7 +181,8 @@
       "loadrelaystate": { "name": "Relé da carga" },
       "n_linerelaystate": { "name": "Relé do neutro" },
       "dcrelaystate": { "name": "Relé DC" },
-      "earthrelaystate": { "name": "Relé de aterramento" }
+      "earthrelaystate": { "name": "Relé de aterramento" },
+      "connected": { "name": "Conectado" }
     },
     "button": {
       "removetheaccumulateddata": { "name": "Remover dados acumulados" },

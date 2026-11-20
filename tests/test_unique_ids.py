@@ -2,7 +2,7 @@
 
 Home Assistant finds an entity again by its unique id, "<serial number>_<key>". The golden
 file lists the keys of all 156 entities of a real installation (PV18-4024PREM set up as
-pv1800 with a lithium BMS, release 1.0.3). The integration must keep producing exactly
+pv1800 with a lithium BMS, release 1.0.3), plus the entities added on purpose since. The integration must keep producing exactly
 these - adding entities is fine once the golden file is extended on purpose, renaming or
 dropping one is not.
 """
@@ -45,7 +45,8 @@ def _settings_switches() -> list:
 
 
 def test_golden_file_is_complete():
-    assert len(_golden()) == 156
+    # 156 entities of the real installation (release 1.0.3) + "Connected" (added in 1.1.0)
+    assert len(_golden()) == 157
 
 
 def test_pv1800_unique_id_keys_match_the_real_installation(const):
@@ -54,6 +55,7 @@ def test_pv1800_unique_id_keys_match_the_real_installation(const):
     produced |= {f"raw_{address}" for address in _raw_registers()}
     produced |= {"BatteryChargePower", "BatteryDischargePower"}
     produced |= set(_settings_switches())
+    produced |= {"Connected"}  # added in 1.1.0
 
     golden = _golden()
     assert golden - produced == set(), "entities of existing installations would lose their id"

@@ -182,7 +182,8 @@
       "loadrelaystate": { "name": "Relay Load" },
       "n_linerelaystate": { "name": "Relay N Line" },
       "dcrelaystate": { "name": "Relay DC" },
-      "earthrelaystate": { "name": "Relay Earth" }
+      "earthrelaystate": { "name": "Relay Earth" },
+      "connected": { "name": "Connected" }
     },
     "button": {
       "removetheaccumulateddata": { "name": "Remove Accumulated Data" },

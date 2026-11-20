@@ -129,6 +129,11 @@ class MustBatteryFlowSensor(SensorEntity):
         return max(0, -power) if self._charging else max(0, power)
 
     @property
+    def available(self) -> bool:
+        # EXTENDED 1.1.0: a frozen power value would keep adding energy in an Integral helper
+        return self._inverter.has_fresh("BattPower")
+
+    @property
     def device_info(self) -> dict[str, Any] | None:
         return self._inverter._device_info()
 
@@ -185,5 +190,6 @@ class MustInverterSensor(SensorEntity):
         return self._inverter._device_info()
 
     @property
-    def available(self) -> dict[str, Any] | None:
-        return self._key in self._inverter.data
+    def available(self) -> bool:
+        # EXTENDED 1.1.0: not available either when the value has become too old
+        return self._inverter.has_fresh(self._key)

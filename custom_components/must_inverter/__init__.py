@@ -83,6 +83,10 @@ CLEAR_AFTER_GOOD_READS = 10
 # waiting for it and is thrown away, instead of being taken as the answer to the next
 # request - which shifted every later reply of that poll by one.
 QUIET_AFTER_DESYNC_S = 1.0
+# EXTENDED 1.1.0: after this many polls in a row without a believable answer, values are
+# no longer shown as if they were current: the entities turn "unavailable" and the
+# "Connected" binary sensor turns off. 5 polls = 75 seconds at the default scan interval.
+MAX_MISSED_POLLS = 5
 # EXTENDED 1.0.4: a scan interval of 0 (or less) would poll without a pause.
 MIN_SCAN_INTERVAL_S = 1.0
 MISMATCH_LEARN_MORE_URL = (
@@ -268,6 +272,11 @@ class MustInverter:
         # EXTENDED 1.0.4: implausible-answer handling (see _accept_block)
         self._known_serial = None
         self._implausible = set()
+        # EXTENDED 1.1.0: how old the values are (see has_fresh / connected)
+        self._key_block = {}  # data key -> start address of the block it was decoded from
+        self._block_misses = {}  # start address -> polls in a row without a believable answer
+        self._missed_polls = 0  # polls in a row in which nothing at all was read
+        self._accepted_blocks = set()  # start addresses read successfully in the current poll
         self.registers = {}
         self.data = {}
 
@@ -310,19 +319,75 @@ class MustInverter:
         if not await self._check_and_reopen():
             # if not connected, skip
             _LOGGER.warning("not connected, skipping refresh")
+            self._note_poll_result(set())
+            self._notify_entities()
             return False
 
         try:
             update_result = await self.read_modbus_data()
-
-            if update_result:
-                for update_callback in self._callbacks:
-                    update_callback()
         except Exception:
             _LOGGER.exception("error reading inverter data", exc_info=True)
             update_result = False
 
+        # EXTENDED 1.1.0: entities are told after every poll, also a failed one - that is
+        # how they learn that their values have become too old to show.
+        self._notify_entities()
+
         return update_result
+
+    def _notify_entities(self):
+        """Let every entity write its state again (new values, or no longer available)."""
+        if self._stopping:
+            return
+        for update_callback in list(self._callbacks):
+            try:
+                update_callback()
+            except Exception:
+                _LOGGER.exception("error updating an entity", exc_info=True)
+
+    def _note_poll_result(self, accepted):
+        """Keep count of polls without an answer (EXTENDED 1.1.0).
+
+        `accepted` holds the start addresses of the blocks read successfully in this poll.
+        Every block that gave values before and is not in it has missed one more poll -
+        this includes the battery block (113-114) once it is no longer asked for.
+        """
+        if self._stopping:
+            return
+        for start in self._block_misses:
+            if start not in accepted:
+                self._block_misses[start] += 1
+        was_connected = self.connected
+        self._missed_polls = 0 if accepted else self._missed_polls + 1
+        if was_connected and not self.connected:
+            _LOGGER.warning(
+                "the inverter has not answered for %s polls in a row - its entities are unavailable until it answers again",
+                self._missed_polls,
+            )
+        elif not was_connected and self.connected:
+            _LOGGER.info("the inverter is answering again")
+
+    @property
+    def connected(self):
+        """Tell whether the inverter answered at least once in the last MAX_MISSED_POLLS polls."""
+        return self._missed_polls < MAX_MISSED_POLLS
+
+    @property
+    def missed_polls(self):
+        """Polls in a row without any answer, counted up to MAX_MISSED_POLLS."""
+        return min(self._missed_polls, MAX_MISSED_POLLS)
+
+    def has_fresh(self, key):
+        """Tell whether a value exists and is recent enough to show (EXTENDED 1.1.0).
+
+        A value is too old when the register block it comes from has not been read
+        successfully for MAX_MISSED_POLLS polls in a row. Before, the last value stayed
+        visible for as long as the inverter was off or unplugged.
+        """
+        if key not in self.data:
+            return False
+        block = self._key_block.get(key)
+        return block is None or self._block_misses.get(block, 0) < MAX_MISSED_POLLS
 
     @property
     def name(self):
@@ -344,6 +409,13 @@ class MustInverter:
 
     def _note_bms_failure(self, response):
         """Count failed BMS (113-114) reads and stop asking after a few (EXTENDED)."""
+        if not self._accepted_blocks:
+            # EXTENDED 1.1.0: nothing at all was read in this poll - the inverter is off or
+            # unplugged, which says nothing about its BMS link. Counting these gave up on
+            # battery SoC/SoH after any outage of 3 polls: the last values then stayed
+            # frozen until Home Assistant was restarted.
+            _LOGGER.debug("battery SoC/SoH read failed while the inverter is not answering: %s", response)
+            return
         self._bms_failures += 1
         if self._bms_failures >= BMS_MAX_FAILURES:
             _LOGGER.warning(
@@ -475,6 +547,10 @@ class MustInverter:
         read.update(block)
         if decoded:
             self.data.update(decoded)
+            for key in decoded:
+                self._key_block[key] = start
+        self._block_misses[start] = 0
+        self._accepted_blocks.add(start)
         return True
 
     def close(self):
@@ -535,6 +611,7 @@ class MustInverter:
             )
             return False
         self._reading = True
+        self._accepted_blocks = set()
         try:
             return await self._read_modbus_data_locked()
         finally:
@@ -542,6 +619,8 @@ class MustInverter:
             # cancelled or raised, so every later poll was skipped ("previous read
             # still in progress") until Home Assistant was restarted.
             self._reading = False
+            # EXTENDED 1.1.0: remember which blocks answered (see has_fresh / connected)
+            self._note_poll_result(self._accepted_blocks)
 
     async def _read_modbus_data_locked(self):
 
