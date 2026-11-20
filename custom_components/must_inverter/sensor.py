@@ -5,7 +5,7 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, Sen
 from homeassistant.const import EntityCategory, Platform, UnitOfEnergy, UnitOfPower
 from homeassistant.core import callback
 
-from .const import DOMAIN, OPTIONS, Sensor
+from .const import DIAGNOSTIC_SENSORS, DOMAIN, OPTIONS, Sensor
 from .__init__ import MustInverter
 
 _LOGGER = logging.getLogger(__name__)
@@ -129,6 +129,11 @@ class MustBatteryFlowSensor(SensorEntity):
         return max(0, -power) if self._charging else max(0, power)
 
     @property
+    def available(self) -> bool:
+        # EXTENDED 1.1.0: a frozen power value would keep adding energy in an Integral helper
+        return self._inverter.has_fresh("BattPower")
+
+    @property
     def device_info(self) -> dict[str, Any] | None:
         return self._inverter._device_info()
 
@@ -148,6 +153,8 @@ class MustInverterSensor(SensorEntity):
         self._attr_device_class = sensor_info.device_class
         self._attr_entity_registry_enabled_default = sensor_info.enabled
         self._attr_options = OPTIONS.get(self._key)
+        if self._key in DIAGNOSTIC_SENSORS:
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC  # EXTENDED 1.1.0
 
         if self._attr_native_unit_of_measurement == UnitOfEnergy.KILO_WATT_HOUR:
             self._attr_state_class = SensorStateClass.TOTAL_INCREASING
@@ -181,9 +188,19 @@ class MustInverterSensor(SensorEntity):
             return value * self._coeff
 
     @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        # EXTENDED 1.1.0: state sensors (charging state, work state ...) also give the number
+        # the inverter sent. A value without a documented meaning shows as "unknown"; the
+        # number stays visible here so it can be looked up or used in an automation.
+        if self._attr_options is None or self._key not in self._inverter.data:
+            return None
+        return {"raw_value": self._inverter.data[self._key]}
+
+    @property
     def device_info(self) -> dict[str, Any] | None:
         return self._inverter._device_info()
 
     @property
-    def available(self) -> dict[str, Any] | None:
-        return self._key in self._inverter.data
+    def available(self) -> bool:
+        # EXTENDED 1.1.0: not available either when the value has become too old
+        return self._inverter.has_fresh(self._key)

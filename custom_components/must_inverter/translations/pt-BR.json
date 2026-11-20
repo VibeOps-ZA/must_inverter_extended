@@ -50,6 +50,7 @@
         "title": "Configurações avançadas do PyModbus",
         "description": "Deixe esta seção inalterada, a menos que você esteja tendo problemas de conexão ou precise ajustar as configurações de conexão do modbus.",
         "data": {
+          "allow_calibration_writes": "Permitir gravação de calibração (avançado)",
           "device_id": "ID do dispositivo",
           "timeout": "Timeout (segundos)",
           "retries": "Tentativas",
@@ -57,6 +58,7 @@
           "reconnect_delay_max": "Delay máximo de reconexão (segundos)"
         },
         "data_description": {
+          "allow_calibration_writes": "Deixe desligado. Os números de calibração (desativados por padrão) alteram como o inversor mede suas próprias tensões e correntes; um valor errado pode fazer com que a bateria seja carregada demais ou de menos e não é fácil de desfazer. Enquanto estiver desligado, qualquer tentativa de alterá-los é recusada.",
           "device_id": "O ID do dispositivo Modbus (slave address) do inversor. O padrão é 4 (0x04). Use esta opção somente quando existirem mais de um inversor conectados à mesma porta serial (como nos casos de inversores em paralelo)",
           "timeout": "Tempo limite para conectar e receber dados.",
           "retries": "Número máximo de tentativas por solicitação.",
@@ -116,6 +118,7 @@
         "title": "Configurações avançadas do PyModbus",
         "description": "Deixe esta seção inalterada, a menos que você esteja tendo problemas de conexão ou precise ajustar as configurações de conexão do modbus.",
         "data": {
+          "allow_calibration_writes": "Permitir gravação de calibração (avançado)",
           "device_id": "ID do dispositivo",
           "timeout": "Timeout (segundos)",
           "retries": "Tentativas",
@@ -123,6 +126,7 @@
           "reconnect_delay_max": "Delay máximo de reconexão (segundos)"
         },
         "data_description": {
+          "allow_calibration_writes": "Deixe desligado. Os números de calibração (desativados por padrão) alteram como o inversor mede suas próprias tensões e correntes; um valor errado pode fazer com que a bateria seja carregada demais ou de menos e não é fácil de desfazer. Enquanto estiver desligado, qualquer tentativa de alterá-los é recusada.",
           "device_id": "O ID do dispositivo Modbus (slave address) do inversor. O padrão é 4 (0x04). Use esta opção somente quando existirem mais de um inversor conectados à mesma porta serial (como nos casos de inversores em paralelo)",
           "timeout": "Tempo limite para conectar e receber dados.",
           "retries": "Número máximo de tentativas por solicitação.",
@@ -181,7 +185,8 @@
       "loadrelaystate": { "name": "Relé da carga" },
       "n_linerelaystate": { "name": "Relé do neutro" },
       "dcrelaystate": { "name": "Relé DC" },
-      "earthrelaystate": { "name": "Relé de aterramento" }
+      "earthrelaystate": { "name": "Relé de aterramento" },
+      "connected": { "name": "Conectado" }
     },
     "button": {
       "removetheaccumulateddata": { "name": "Remover dados acumulados" },

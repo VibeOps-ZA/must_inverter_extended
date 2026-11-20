@@ -3,7 +3,7 @@ import logging
 from typing import Any, NamedTuple
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.const import Platform
+from homeassistant.const import EntityCategory, Platform
 from homeassistant.core import callback
 
 from .const import DOMAIN, MODEL_PH1100, Sensor
@@ -65,6 +65,7 @@ class MustInverterSwitch(SwitchEntity):
         self._address = sensor_info.address
 
         self._attr_has_entity_name = True
+        self._attr_entity_category = EntityCategory.CONFIG  # EXTENDED 1.1.0: a setting
         self._attr_unique_id = f"{self._inverter.data['InverterSerialNumber']}_{self._key}"
         self._attr_translation_key = self._key.lower()
         self._attr_device_class = sensor_info.device_class
@@ -102,8 +103,9 @@ class MustInverterSwitch(SwitchEntity):
         return self._inverter._device_info()
 
     @property
-    def available(self) -> dict[str, Any] | None:
-        return self._key in self._inverter.data
+    def available(self) -> bool:
+        # EXTENDED 1.1.0: not available either when the value has become too old
+        return self._inverter.has_fresh(self._key)
 
 
 class MustInverterSettingsSwitch(SwitchEntity):
@@ -115,6 +117,7 @@ class MustInverterSettingsSwitch(SwitchEntity):
         self._flip = setting_config.flip
 
         self._attr_has_entity_name = True
+        self._attr_entity_category = EntityCategory.CONFIG  # EXTENDED 1.1.0: a setting
         self._attr_unique_id = f"{self._inverter.data['InverterSerialNumber']}_{self._name}"
         self._attr_translation_key = self._name.lower()
         self._attr_entity_registry_enabled_default = setting_config.enabled
@@ -170,5 +173,6 @@ class MustInverterSettingsSwitch(SwitchEntity):
         return self._inverter._device_info()
 
     @property
-    def available(self) -> dict[str, Any] | None:
-        return "SystemSetting" in self._inverter.data
+    def available(self) -> bool:
+        # EXTENDED 1.1.0: not available either when the value has become too old
+        return self._inverter.has_fresh("SystemSetting")

@@ -35,11 +35,14 @@ your existing devices, entities, dashboards and automations keep working unchang
 5. [Switching from the original integration](#switching-from-the-original-integration)
 6. [Setting it up (every option explained)](#setting-it-up-every-option-explained)
 7. [What you get (entities)](#what-you-get-entities)
-8. [Battery in the Energy dashboard](#battery-in-the-energy-dashboard)
-9. [Safety - read this before changing settings](#safety---read-this-before-changing-settings)
-10. [Register findings (for other models and researchers)](#register-findings-for-other-models-and-researchers)
-11. [Troubleshooting](#troubleshooting)
-12. [Acknowledgments](#acknowledgments) and [License](#license)
+8. [Is the inverter answering?](#is-the-inverter-answering)
+9. [Battery in the Energy dashboard](#battery-in-the-energy-dashboard)
+10. [Safety - read this before changing settings](#safety---read-this-before-changing-settings)
+11. [Register findings (for other models and researchers)](#register-findings-for-other-models-and-researchers)
+12. [Troubleshooting](#troubleshooting)
+13. [For developers: running the tests](#for-developers-running-the-tests)
+14. [Acknowledgments](#acknowledgments), [Repair: Mismatched Modbus Registers](#repair-mismatched-modbus-registers)
+    and [License](#license)
 
 ---
 
@@ -58,6 +61,14 @@ your existing devices, entities, dashboards and automations keep working unchang
 | Inverter powered off at start-up | `KeyError` | Clean "no data" retry (upstream PR #117) |
 | Home Assistant restart | Polling continues during shutdown: modbus read errors and a read task HA can't cancel | Polling stops when shutdown starts; nothing logged |
 | Serial number | Passed as a number - breaks in **HA 2026.12** | Passed as text (upstream issue #119) |
+| Inverter faults | Only the first fault register is decoded - over temperature, grid and battery-connection faults show "No errors" | Both fault registers are decoded |
+| Inverter answers "all zeroes" (after it shut itself down) | Taken as real: serial number 0, energy totals 0, then counted twice in the Energy dashboard | Ignored - previous values are kept, a warning is logged |
+| A setting the inverter refuses | Looks like it worked | The action fails with an error message |
+| Diagnostics download | Contains the serial number in the raw registers | Serial number hidden |
+| Inverter off, unplugged or not answering | Every entity keeps its last value for ever | Entities turn *unavailable* after 5 missed polls; a **Connected** sensor shows whether the inverter answers |
+| Calibration values | Can be changed like any other number once enabled | Write-protected unless an expert option is turned on |
+| Charging state without a documented meaning (3, 5, 8) | `IndexError` for 5 and 8; 3 shown as "Equalization charge" | *unknown*, with the raw number in the attribute `raw_value` |
+| Battery SoC / SoH after an outage of 45 seconds | - | Read again when the inverter is back (was frozen until a restart) |
 
 Full history: [CHANGELOG.md](CHANGELOG.md).
 
@@ -65,7 +76,8 @@ Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ## What you need
 
-1. **Home Assistant** (2025.1 or newer). New to it? Start at
+1. **Home Assistant 2025.9 or newer** (older versions ship a Modbus library that is too old for
+   this integration). New to it? Start at
    [home-assistant.io/installation](https://www.home-assistant.io/installation/).
 2. **HACS** (the Home Assistant Community Store) to install and update this integration - see
    [hacs.xyz/docs/use](https://hacs.xyz/docs/use/). Manual install also works (below).
@@ -107,13 +119,51 @@ Wiring photos, pin-outs and many working setups are collected in the original pr
 4. Find **Must Inverter Extended** in HACS and click **Download**.
 5. **Restart Home Assistant** (Settings > System > three dots > Restart).
 
-### Manual
+### Manual (public releases)
 
 1. Download `must_inverter.zip` from the
    [latest release](https://github.com/VibeOps-ZA/must_inverter_extended/releases/latest).
 2. Unzip it into `config/custom_components/must_inverter/` (create the folders if needed), so you
    end up with `config/custom_components/must_inverter/__init__.py` and friends.
 3. Restart Home Assistant.
+
+### Private repository: install or update by copying the folder (how the owner does it)
+
+This repository is **private**. [HACS](https://hacs.xyz/docs/use/) can *track* a private repository (it shows that a
+new version exists) but **cannot download** it: its downloads use anonymous GitHub addresses, which answer "404" for
+a private repository. "Download ZIP" and release links also need a GitHub login. So install by copying the integration
+folder onto Home Assistant yourself. Never switch the repository to public just to make HACS work.
+
+1. **Make a backup first:** **Settings -> System -> Backups** ([Home Assistant backup docs](https://www.home-assistant.io/integrations/backup/)).
+2. **Get the code** on a computer you trust that has access to the `VibeOps-ZA` GitHub account. The version running at the
+   owner's home is the branch `feature/1.1.0`:
+   ```bash
+   git clone --branch feature/1.1.0 https://github.com/VibeOps-ZA/must_inverter_extended.git
+   ```
+   GitHub asks for a user name and a **personal access token** as the password (a token with read-only access to this
+   repository is enough; [how to create one](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)).
+   Never paste the token into a file in this repository.
+3. **Make Home Assistant reachable over SSH** (a command-line login) with the
+   [Advanced SSH & Web Terminal app](https://github.com/hassio-addons/addon-ssh) (add it from the app store and give it
+   your public key in its configuration), or the operating system's own SSH described in the
+   [Home Assistant developer docs](https://developers.home-assistant.io/docs/operating-system/debugging/).
+   In the commands below replace `HA_USER` and `HA_HOST` with your SSH user and Home Assistant's address.
+4. **Copy the folder** (the old copy is removed first so deleted files do not linger; check the path twice, the
+   `rm` removes only this one integration's folder):
+   ```bash
+   ssh HA_USER@HA_HOST 'rm -rf /config/custom_components/must_inverter'
+   scp -r must_inverter_extended/custom_components/must_inverter HA_USER@HA_HOST:/config/custom_components/
+   ```
+   `/config` is Home Assistant's configuration folder (the one containing `configuration.yaml`). Your devices,
+   entities and settings are stored inside Home Assistant, not in this folder, so nothing is lost.
+5. **Restart Home Assistant** (**Settings -> System -> power icon -> Restart Home Assistant**). Home Assistant loads
+   integration code only when it starts, so a restart is needed after every install or update.
+6. **Check the version:** open `/config/custom_components/must_inverter/manifest.json` (`"version": "1.1.0"` for this
+   release) or look under **Settings -> Devices & services**.
+
+**At the owner's home** steps 2-4 are run from the AI Pi host (`ai-pi`), which already holds the GitHub token and the SSH
+access to Home Assistant, so nothing secret is typed or stored in this repository. Changes are made on a branch,
+installed from it for testing, and merged to `main` only after the owner's OK.
 
 ---
 
@@ -171,8 +221,9 @@ entities live in Home Assistant, not in the integration files, so nothing is los
 | --- | --- | --- |
 | Timeout | Seconds to wait for each answer. | `2.0` |
 | Retries | Retries per request before giving up. | `3` |
-| Reconnect delay / max | Seconds before reconnecting after a dropped connection (grows up to "max"). | `0.3` / `1.0` |
+| Reconnect delay / max | Seconds before reconnecting after a dropped connection (the delay doubles after each failed attempt, up to "max"). A delay of `0` turns reconnecting off. | `0.3` / `1.0` |
 | Device ID | Modbus slave address of the inverter. Must inverters use **4**. | `4` |
+| Allow calibration writes (expert) | Leave **off**. Only while this is on can the eight *Calibration ...* numbers be changed; they alter how the inverter measures its own voltages and currents (see [Safety](#safety---read-this-before-changing-settings)). | off |
 
 You can change all of these later under the integration's **Configure** button.
 
@@ -195,9 +246,49 @@ Entity names depend on your model. Typical groups:
 - **Diagnostic "Raw register N"** (extended, disabled by default) - raw values of registers the
   integration already reads but does not decode yet. Useful for decoding new features; they cause
   **no** extra Modbus traffic.
+- **Connected** (extended) - a binary sensor that is on while the inverter answers. See
+  [Is the inverter answering?](#is-the-inverter-answering) below.
+
+On the device page the entities are grouped: measurements under **Sensors**, everything you can
+change under **Configuration**, and descriptive values (model, serial number, versions, ratings,
+*Connected*, raw registers) under **Diagnostic**.
+
+The state sensors *Charging state*, *MPPT state*, *Charger work state* and *Work state* also carry
+the number the inverter sent, in the attribute `raw_value` (open the entity and expand
+**Attributes**). If the inverter sends a number that has no documented meaning, the sensor shows
+*unknown* and the number is still there.
 
 To enable a disabled entity: **Settings > Devices & services > Must Inverter > (your device) >**
 "*+N entities not shown*" > pick the entity > **Settings (cog) > Enabled**.
+
+---
+
+## Is the inverter answering?
+
+Home Assistant reads the inverter every *scan interval* (15 seconds by default). Sometimes a read
+fails - the cable is unplugged, the inverter is switched off, or Home Assistant is busy.
+
+- **One to four failed reads in a row:** nothing changes. The entities keep their last value.
+- **Five failed reads in a row** (75 seconds by default): the values are too old to trust. The
+  entities show **unavailable** and the **Connected** binary sensor turns **off**. As soon as the
+  inverter answers again, everything comes back by itself.
+- If only one group of values stops answering (for example the battery management system), only
+  the entities of that group turn unavailable; *Connected* stays on.
+
+To be told when the inverter goes offline, create an automation
+([Home Assistant automation basics](https://www.home-assistant.io/docs/automation/basics/)):
+
+1. **Settings > Automations & scenes > Create automation > Create new automation.**
+2. **When:** *Entity* > *State*, entity **Connected** of your inverter, **To:** *Disconnected*,
+   **For:** 2 minutes.
+3. **Then do:** *Notifications* > *Send a notification* to your phone
+   ([companion app](https://companion.home-assistant.io/docs/notifications/notifications-basic/)),
+   with a message such as "The inverter is not answering".
+4. Save.
+
+If you use values of this integration in your own automations or templates, remember that they can
+now be *unavailable*: give templates a default, e.g.
+`{{ states('sensor.your_inverter_battery_state_of_charge') | float(0) }}`.
 
 ---
 
@@ -222,6 +313,14 @@ Home Assistant's Energy dashboard wants *energy* (kWh) for battery charge and di
   (number, select, switch, time, button).
 - Some settings (especially **calibration** values) cannot be easily undone and can upset the
   inverter. They are disabled by default - leave them alone unless you know exactly why.
+- The eight **Calibration ...** numbers are also **write-protected**: changing one is refused
+  until you turn on *Allow calibration writes (expert)* under the integration's **Configure**
+  button. They tell the inverter how to correct its own voltage and current measurements; a wrong
+  battery-voltage calibration makes it charge the battery too high or too low. Turn the option off
+  again when you are done.
+- The two **Remove accumulated data** buttons (disabled by default) erase the inverter's lifetime
+  energy counters. This cannot be undone.
+- **Battery equalization** is meant for lead-acid batteries. Leave it off for lithium batteries.
 - **Note your settings first.** Write down (or screenshot) every number/select value before you
   experiment, so you can restore them. Some inverters reset to factory defaults after certain
   writes.
@@ -243,10 +342,12 @@ please open an issue with your results.
 | 44180 | Reported for PH18 + Pylontech as SoC; returns 0 on PV18. |
 | 15104-15119 | PH1100 BMS block - all zeros on PV18. |
 | 15202 | MPPT on/off state. |
-| 15203 | Charging state. Undocumented values: **5** while MPPT (15202) = 1, **3** while MPPT = 0 near full (charger cycling at the BMS limit), **8** once when SoC reached 100 %. |
+| 15203 | Charging state. Defined for these inverters: 0 stop, 1 absorb charge, 2 float charge. Undocumented values seen: **5** while MPPT (15202) = 1, **3** while MPPT = 0 near full (charger cycling at the BMS limit), **8** once when SoC reached 100 %. They show as *unknown*, with the number in `raw_value`. (3 means "EQ charge" only on PC1800 solar charge controllers; it was shown as "Equalization charge" here before 1.1.0.) |
+| 15213 bit 5 | Shown as charger error "PV voltage is too low". This text comes from the PC1800 charge-controller table and is **not confirmed** for these inverters - do not rely on it alone. |
 | 20117 | Low-battery warning voltage (= switch-to-grid voltage 20118 - 0.3 V). |
 | 20145 / 20146 | Probably SOC-mode enable (1) and low-SOC cut-off (10 %). Not exposed. |
 | 20147 / 20148 | SOC back to grid / back to battery (%). The inverter switches to grid when SoC <= 20147 and, once latched, stays on grid while SoC < 20148. Lowering 20148 below the current SoC releases back to battery after ~8-9 minutes. |
+| 25269-25272 | Copies of the serial number (25269-25270) and of the hardware / software version (25271-25272). |
 | 25273 | Battery power in W (negative = charging). |
 | 25275 | 24 - likely the battery voltage class (24 V). |
 | 25278 | Same value as 20006 (version-like, 10414). |
@@ -272,9 +373,31 @@ Other observations:
 | "previous read still in progress" | Increase the scan interval (15 s is a good start). |
 | Battery SoC / SoH unavailable | Your inverter has no BMS link (or uses a different register). The log says so once, after 3 tries. |
 | Settings changed by themselves | Some Must firmware resets settings after certain writes - restore from your notes. |
+| Log says "ignoring an implausible answer ... every register is 0" | The inverter answered with empty data and the integration kept the last real values. If it does not stop, the inverter has probably shut itself down: switch off PV, grid and battery, wait a minute, and switch it back on. |
+| Changing a setting fails with "The inverter refused to write ..." | The inverter did not accept that value (out of its own limits, or not allowed in the current mode). Nothing was changed. |
+| All inverter entities are *unavailable* and *Connected* is off | The inverter has not answered for 5 reads in a row. Check that it is on, the cable is plugged in at both ends, and nothing else uses the port. Everything comes back by itself with the first answer. |
+| *Charging state* shows *unknown* | The inverter sent a number that the Must documentation does not explain (3, 5 and 8 were seen on a PV18-4024PREM with a lithium BMS). The number is in the sensor's `raw_value` attribute. Only 0 (stop), 1 (absorb charge) and 2 (float charge) are defined for these inverters. |
+| Changing a *Calibration ...* number fails with "write-protected" | Intended - see [Safety](#safety---read-this-before-changing-settings). |
 | More detail needed | Add to `configuration.yaml`: `logger: { logs: { custom_components.must_inverter: debug } }` and restart. |
 
 Bugs and ideas: [open an issue](https://github.com/VibeOps-ZA/must_inverter_extended/issues).
+
+---
+
+## For developers: running the tests
+
+The decoding and safety logic is covered by tests that need neither Home Assistant nor an
+inverter - only [Python](https://www.python.org/downloads/) 3.13 or newer and
+[pytest](https://docs.pytest.org/en/stable/getting-started.html):
+
+```bash
+python3 -m pip install pytest
+python3 -m pytest
+```
+
+They use one poll recorded from a real PV18-4024PREM (`tests/fixtures/`, serial number replaced)
+and a list of the entity keys of a real installation (`tests/golden/`). A change that would rename
+or drop an existing entity fails the tests. They also run automatically on every pull request.
 
 ---
 
@@ -295,7 +418,7 @@ This project is not affiliated with Must Solar. Use at your own risk.
 ## Repair: Mismatched Modbus Registers
 
 Home Assistant shows this repair when the inverter's replies don't match what the integration
-asked for **at least 3 times within 10 minutes** (ignored for the first 2 minutes after Home
+asked for **in at least 3 polls within 10 minutes** (ignored for the first 2 minutes after Home
 Assistant starts). It clears itself after 10 good reads in a row.
 
 A single mismatch right after a restart is normal: Home Assistant is busy while starting or
@@ -308,6 +431,13 @@ If the repair keeps coming back, check:
    WiFi/RS485 dongle polling the same inverter port at the same time.
 2. **Cabling.** Short, good-quality USB/RS485 cable; no loose connectors.
 3. **Timeout/retries** in the integration options: raise the timeout if your link is slow.
+
+## Repair: No serial number set
+
+Some inverters have no serial number stored. Home Assistant then shows the repair **No serial number set**, because
+two such inverters could not be told apart. Open the repair: it offers to **write a serial number to the inverter**.
+Type the number printed on the side of the inverter, or leave the suggested random value. This does not change how the
+inverter works. It is only needed if you add more than one inverter; with a single inverter you can ignore it.
 
 ## License
 

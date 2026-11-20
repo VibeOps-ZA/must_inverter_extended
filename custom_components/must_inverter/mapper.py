@@ -239,6 +239,18 @@ def convert_partArr5(partArr5):
     return result
 
 
+def convert_partArr3_with_pv1(registers):
+    """Charger readings plus the PV1900 "PV1" values (EXTENDED 1.0.4).
+
+    PV1 current and power (15207-15208) are part of the 15201-15221 block that is read
+    anyway, so they are decoded from it instead of being asked for a second time.
+    """
+    result = convert_partArr3(registers)
+    if result is not None:
+        result.update(convert_pv_data(registers))
+    return result
+
+
 # used for PV1900
 def convert_battery_status(registers):
     """Convert battery status registers."""

@@ -12,8 +12,7 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/VibeOps-ZA/must_inverter_extended/issues",
   "requirements": [
-    "pymodbus>=3.10.0",
-    "aiofiles>=24.1.0"
+    "pymodbus>=3.10.0"
   ],
-  "version": "1.0.3"
+  "version": "1.1.0"
 }

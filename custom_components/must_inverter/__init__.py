@@ -4,7 +4,6 @@ import asyncio
 import time as _stdlib_time
 from collections import deque
 import logging
-import contextlib
 
 from datetime import timedelta
 
@@ -12,7 +11,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
 from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient, AsyncModbusUdpClient
@@ -38,6 +37,7 @@ from .const import (
     CONF_RECONNECT_DELAY,
     CONF_RECONNECT_DELAY_MAX,
     CONF_DEVICE_ID,
+    CONF_ALLOW_CALIBRATION_WRITES,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_DEVICE_ID,
     get_sensors_for_model,
@@ -52,13 +52,14 @@ from .mapper import (
     convert_ph1100_partArr4,
     convert_partArr2,
     convert_partArr3,
+    convert_partArr3_with_pv1,
     convert_partArr4,
     convert_partArr5,
     convert_partArr6,
     convert_battery_status,
     convert_pv_data,
 )
-# from .utils.register_monitor import RegisterMonitor
+from .safeguards import block_reject_reason, serial_number_changed, write_refusal_reason
 
 PLATFORMS = [
     Platform.SENSOR,
@@ -76,6 +77,17 @@ STARTUP_GRACE_S = 120
 MISMATCH_WINDOW_S = 600
 MISMATCH_COUNT = 3
 CLEAR_AFTER_GOOD_READS = 10
+# EXTENDED 1.0.4: pause after a reply that does not belong to its request (or that only
+# came after a retry). The reply that is still on its way then arrives while nothing is
+# waiting for it and is thrown away, instead of being taken as the answer to the next
+# request - which shifted every later reply of that poll by one.
+QUIET_AFTER_DESYNC_S = 1.0
+# EXTENDED 1.1.0: after this many polls in a row without a believable answer, values are
+# no longer shown as if they were current: the entities turn "unavailable" and the
+# "Connected" binary sensor turns off. 5 polls = 75 seconds at the default scan interval.
+MAX_MISSED_POLLS = 5
+# EXTENDED 1.0.4: a scan interval of 0 (or less) would poll without a pause.
+MIN_SCAN_INTERVAL_S = 1.0
 MISMATCH_LEARN_MORE_URL = (
     "https://github.com/VibeOps-ZA/must_inverter_extended#repair-mismatched-modbus-registers"
 )
@@ -164,26 +176,6 @@ async def _async_setup_inverter(hass: HomeAssistant, entry: ConfigEntry, inverte
 
     entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, _async_on_ha_stop))
 
-    # Removing register monitor as we've found all needed registers
-    # If you need to add it back, uncomment the following lines and set the ranges to scan in register_monitor.py
-    # monitor = RegisterMonitor(hass)
-
-    # Add monitoring to the update cycle, but at a slower rate
-    # async def delayed_monitor():
-    #     """Run monitor at a slower rate to avoid overwhelming the device."""
-    #     try:
-    #         while True:
-    #             await monitor.scan_ranges(inverter)
-    #             await asyncio.sleep(300)  # Run every 5 minutes
-    #     except asyncio.CancelledError:
-    #         _LOGGER.debug("Register monitor task cancelled")
-    #         raise
-
-    # monitor_task = asyncio.create_task(delayed_monitor())
-
-    # Store the task so we can cancel it later
-    # hass.data[DOMAIN][entry.entry_id]["monitor_task"] = monitor_task
-
     return True
 
 
@@ -192,12 +184,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
-        # Cancel the monitor task
-        if monitor_task := hass.data[DOMAIN][entry.entry_id].get("monitor_task"):
-            monitor_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await monitor_task
-
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
@@ -245,7 +231,11 @@ class MustInverter:
         self._client.dtr = False
         self._lock = asyncio.Lock()
         self._device_id = entry.options.get(CONF_DEVICE_ID, DEFAULT_DEVICE_ID)
-        self._scan_interval = timedelta(seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+        # EXTENDED 1.1.0: off unless the user turned the expert option on
+        self._allow_calibration_writes = bool(entry.options.get(CONF_ALLOW_CALIBRATION_WRITES, False))
+        self._scan_interval = timedelta(
+            seconds=max(MIN_SCAN_INTERVAL_S, float(entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)))
+        )
         self._reading = False
         self._bms_failures = 0
         # EXTENDED 1.0.1: mismatched-register handling (see _note_mismatch)
@@ -254,6 +244,14 @@ class MustInverter:
         self._good_reads = 0
         self._issue_raised = False
         self._needs_flush = True
+        # EXTENDED 1.0.4: implausible-answer handling (see _accept_block)
+        self._known_serial = None
+        self._implausible = set()
+        # EXTENDED 1.1.0: how old the values are (see has_fresh / connected)
+        self._key_block = {}  # data key -> start address of the block it was decoded from
+        self._block_misses = {}  # start address -> polls in a row without a believable answer
+        self._missed_polls = 0  # polls in a row in which nothing at all was read
+        self._accepted_blocks = set()  # start addresses read successfully in the current poll
         self.registers = {}
         self.data = {}
 
@@ -296,19 +294,75 @@ class MustInverter:
         if not await self._check_and_reopen():
             # if not connected, skip
             _LOGGER.warning("not connected, skipping refresh")
+            self._note_poll_result(set())
+            self._notify_entities()
             return False
 
         try:
             update_result = await self.read_modbus_data()
-
-            if update_result:
-                for update_callback in self._callbacks:
-                    update_callback()
         except Exception:
             _LOGGER.exception("error reading inverter data", exc_info=True)
             update_result = False
 
+        # EXTENDED 1.1.0: entities are told after every poll, also a failed one - that is
+        # how they learn that their values have become too old to show.
+        self._notify_entities()
+
         return update_result
+
+    def _notify_entities(self):
+        """Let every entity write its state again (new values, or no longer available)."""
+        if self._stopping:
+            return
+        for update_callback in list(self._callbacks):
+            try:
+                update_callback()
+            except Exception:
+                _LOGGER.exception("error updating an entity", exc_info=True)
+
+    def _note_poll_result(self, accepted):
+        """Keep count of polls without an answer (EXTENDED 1.1.0).
+
+        `accepted` holds the start addresses of the blocks read successfully in this poll.
+        Every block that gave values before and is not in it has missed one more poll -
+        this includes the battery block (113-114) once it is no longer asked for.
+        """
+        if self._stopping:
+            return
+        for start in self._block_misses:
+            if start not in accepted:
+                self._block_misses[start] += 1
+        was_connected = self.connected
+        self._missed_polls = 0 if accepted else self._missed_polls + 1
+        if was_connected and not self.connected:
+            _LOGGER.warning(
+                "the inverter has not answered for %s polls in a row - its entities are unavailable until it answers again",
+                self._missed_polls,
+            )
+        elif not was_connected and self.connected:
+            _LOGGER.info("the inverter is answering again")
+
+    @property
+    def connected(self):
+        """Tell whether the inverter answered at least once in the last MAX_MISSED_POLLS polls."""
+        return self._missed_polls < MAX_MISSED_POLLS
+
+    @property
+    def missed_polls(self):
+        """Polls in a row without any answer, counted up to MAX_MISSED_POLLS."""
+        return min(self._missed_polls, MAX_MISSED_POLLS)
+
+    def has_fresh(self, key):
+        """Tell whether a value exists and is recent enough to show (EXTENDED 1.1.0).
+
+        A value is too old when the register block it comes from has not been read
+        successfully for MAX_MISSED_POLLS polls in a row. Before, the last value stayed
+        visible for as long as the inverter was off or unplugged.
+        """
+        if key not in self.data:
+            return False
+        block = self._key_block.get(key)
+        return block is None or self._block_misses.get(block, 0) < MAX_MISSED_POLLS
 
     @property
     def name(self):
@@ -330,6 +384,13 @@ class MustInverter:
 
     def _note_bms_failure(self, response):
         """Count failed BMS (113-114) reads and stop asking after a few (EXTENDED)."""
+        if not self._accepted_blocks:
+            # EXTENDED 1.1.0: nothing at all was read in this poll - the inverter is off or
+            # unplugged, which says nothing about its BMS link. Counting these gave up on
+            # battery SoC/SoH after any outage of 3 polls: the last values then stayed
+            # frozen until Home Assistant was restarted.
+            _LOGGER.debug("battery SoC/SoH read failed while the inverter is not answering: %s", response)
+            return
         self._bms_failures += 1
         if self._bms_failures >= BMS_MAX_FAILURES:
             _LOGGER.warning(
@@ -357,16 +418,22 @@ class MustInverter:
         except Exception:  # noqa: BLE001
             _LOGGER.debug("could not flush the serial input buffer", exc_info=True)
 
-    def _note_mismatch(self):
+    def _note_mismatch(self, count_it=True):
         """Raise the repair only for a persistent problem (EXTENDED 1.0.1).
 
         Single mismatches right after a restart are expected and harmless. The repair is
         raised after MISMATCH_COUNT mismatches within MISMATCH_WINDOW_S, ignoring the
         first STARTUP_GRACE_S after start, and cleared after CLEAR_AFTER_GOOD_READS good reads.
+
+        EXTENDED 1.0.4: count_it is False for the second and later mismatches of the same
+        poll. One late reply shifts every following reply of that poll, so it used to count
+        as several mismatches and could raise the repair on its own.
         """
         now = _stdlib_time.monotonic()
         self._good_reads = 0
         self._needs_flush = True
+        if not count_it:
+            return
         self._mismatches.append(now)
         while self._mismatches and now - self._mismatches[0] > MISMATCH_WINDOW_S:
             self._mismatches.popleft()
@@ -394,6 +461,72 @@ class MustInverter:
             self._mismatches.clear()
             ir.async_delete_issue(self._hass, DOMAIN, "mismatched_registers")
             _LOGGER.info("reads are consistent again - mismatched registers repair cleared")
+
+    async def _quiet_wait(self):
+        """Wait until a late reply has arrived and been thrown away (EXTENDED 1.0.4).
+
+        The lock is held so that no write is sent in the meantime either. Skipped while
+        Home Assistant is shutting down.
+        """
+        if self._stopping:
+            return
+        async with self._lock:
+            await asyncio.sleep(QUIET_AFTER_DESYNC_S)
+        self._needs_flush = True
+
+    def forget_known_serial(self):
+        """Accept a new serial number on the next read (used after the repair wrote one)."""
+        self._known_serial = None
+
+    def _accept_block(self, start, values, convert, read):
+        """Check one register block and, if it is believable, take it over (EXTENDED 1.0.4).
+
+        Returns False - and leaves all earlier values untouched - when the block cannot be
+        real: every register 0 or 65535 in a block that always holds fixed non-zero values,
+        or a serial number different from the one read earlier. A Must inverter that has
+        shut itself down answers every register with 0; taken as real, that gave the
+        entities new ids (serial number 0) when Home Assistant started in that state, and
+        made Home Assistant count the lifetime energy totals a second time.
+        """
+        reason = block_reject_reason(start, values)
+        block = {start + i: value for i, value in enumerate(values)}
+        decoded = None
+
+        if reason is None:
+            candidate = dict(read)
+            candidate.update(block)
+            decoded = convert(candidate)
+            serial = decoded.get("InverterSerialNumber") if decoded else None
+            if serial_number_changed(self._known_serial, serial):
+                reason = "the serial number differs from the one read earlier"
+            elif serial is not None:
+                self._known_serial = serial
+
+        if reason is not None:
+            self._needs_flush = True
+            if start not in self._implausible:
+                self._implausible.add(start)
+                _LOGGER.warning(
+                    "ignoring an implausible answer at address %s (%s) - keeping the previous values. "
+                    "If this stays, the inverter may have shut itself down and need a full power cycle",
+                    start,
+                    reason,
+                )
+            else:
+                _LOGGER.debug("still an implausible answer at address %s (%s)", start, reason)
+            return False
+
+        if start in self._implausible:
+            self._implausible.discard(start)
+            _LOGGER.info("answers at address %s are plausible again", start)
+        read.update(block)
+        if decoded:
+            self.data.update(decoded)
+            for key in decoded:
+                self._key_block[key] = start
+        self._block_misses[start] = 0
+        self._accepted_blocks.add(start)
+        return True
 
     def close(self):
         _LOGGER.info("closing modbus client")
@@ -426,6 +559,11 @@ class MustInverter:
         return result
 
     async def write_modbus_data(self, address, value):
+        # EXTENDED 1.1.0: every write passes here, so this covers all entities and services
+        refusal = write_refusal_reason(address, self._allow_calibration_writes)
+        if refusal:
+            raise HomeAssistantError(f"Register {address} was not written: {refusal}")
+
         await self._check_and_reopen()
 
         _LOGGER.debug("writing modbus data: %s %s", address, value)
@@ -434,6 +572,10 @@ class MustInverter:
 
         if response.isError():
             _LOGGER.error("error writing modbus data: %s", response)
+            # EXTENDED 1.0.4: tell the caller. Before, a write the inverter refused looked
+            # like a success: the entity showed the new value until the next poll and
+            # automations carried on as if the setting had changed.
+            raise HomeAssistantError(f"The inverter refused to write {value} to register {address}: {response}")
         else:
             _LOGGER.debug("successfully wrote modbus data: %s %s", address, value)
 
@@ -449,6 +591,7 @@ class MustInverter:
             )
             return False
         self._reading = True
+        self._accepted_blocks = set()
         try:
             return await self._read_modbus_data_locked()
         finally:
@@ -456,6 +599,8 @@ class MustInverter:
             # cancelled or raised, so every later poll was skipped ("previous read
             # still in progress") until Home Assistant was restarted.
             self._reading = False
+            # EXTENDED 1.1.0: remember which blocks answered (see has_fresh / connected)
+            self._note_poll_result(self._accepted_blocks)
 
     async def _read_modbus_data_locked(self):
 
@@ -476,7 +621,8 @@ class MustInverter:
             registersAddresses = [
                 # (10000, 10008, convert_partArr1), # Charger Control Messages
                 (10101, 10124, convert_partArr2),  # Charger Control Messages
-                (15201, 15221, convert_partArr3),  # Charger Display Messages
+                # EXTENDED 1.0.4: on a PV1900 this block also gives the PV1 values (see below)
+                (15201, 15221, convert_partArr3_with_pv1 if self.has_extra_registers else convert_partArr3),
                 (20000, 20016, convert_partArr4),  # Inverter Control Messages
                 (20101, 20214, convert_partArr5),  # Inverter Control Messages
                 (25201, 25279, convert_partArr6),  # Inverter Display Messages
@@ -488,7 +634,9 @@ class MustInverter:
                 registersAddresses.extend(
                     [
                         (113, 114, convert_battery_status),  # Battery Status (SoC, SoH)
-                        (15207, 15208, convert_pv_data),  # PV1 Data (Current, Power)
+                        # EXTENDED 1.0.4: 15207-15208 (PV1 current, power) is no longer read a
+                        # second time - it is part of 15201-15221 above. Being a 2-register
+                        # read like 113-114, a late reply to one could pass as the other.
                         (16205, 16208, convert_pv_data),  # PV2 Data (Voltage, Current, Power)
                     ]
                 )
@@ -501,6 +649,7 @@ class MustInverter:
                 registersAddresses.append((113, 114, convert_battery_status))
 
         read = {}
+        mismatch_noted = False
 
         for register in registersAddresses:
             if self.has_extra_registers:
@@ -547,15 +696,21 @@ class MustInverter:
                     # Log the actual values received
                     _LOGGER.debug("Received registers (wrong): %s", response.registers)
 
-                    self._note_mismatch()
+                    # EXTENDED 1.0.4: count it once per poll, then let the late reply pass
+                    self._note_mismatch(count_it=not mismatch_noted)
+                    mismatch_noted = True
+                    await self._quiet_wait()
                 else:
-                    _LOGGER.debug("Correctly read %s registers from start %s", count, start)
-                    self._note_good_read()
-                    if start == 113:
-                        self._bms_failures = 0
-                    for i in range(count):
-                        read[start + i] = response.registers[i]
-                    self.data.update(register[2](read))
+                    if getattr(response, "retries", 0):
+                        # EXTENDED 1.0.4: the request was sent more than once, so a second
+                        # reply may still be on its way - don't let the next request get it
+                        _LOGGER.debug("answer at address %s needed a retry, waiting for the line to go quiet", start)
+                        await self._quiet_wait()
+                    if self._accept_block(start, response.registers, register[2], read):
+                        _LOGGER.debug("Correctly read %s registers from start %s", count, start)
+                        self._note_good_read()
+                        if start == 113:
+                            self._bms_failures = 0
             except asyncio.exceptions.CancelledError:
                 _LOGGER.warning("cancelled modbus read")
                 raise

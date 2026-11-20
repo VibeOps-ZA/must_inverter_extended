@@ -12,6 +12,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .__init__ import MustInverter
 from .const import DOMAIN
+from .safeguards import rewrite_unique_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +40,16 @@ class NoSerialNumber(RepairsFlow):
 
             lower = new_serial_number & 0xFFFF
             upper = (new_serial_number >> 16) & 0xFFFF
+
+            # EXTENDED 1.0.4: write to the inverter FIRST. A refused write now raises, and
+            # then nothing in Home Assistant has been changed yet. Before, the device and
+            # entity ids were rewritten first and no longer matched the inverter when the
+            # write failed.
+            await device.write_modbus_data(20002, upper)
+            await device.write_modbus_data(20003, lower)
+            # the next poll may already read the new serial number - that is expected now
+            device.forget_known_serial()
+
             dr_entries = dr.async_entries_for_config_entry(dr.async_get(self._hass), entry_id)
 
             for device_entry in dr_entries:
@@ -55,14 +66,14 @@ class NoSerialNumber(RepairsFlow):
             for entity_entry in er_entries:
                 try:
                     old_id = entity_entry.unique_id
-                    new_id = old_id.replace(str(old_serial_number), str(new_serial_number))
+                    # EXTENDED 1.0.4: only the serial number at the start is replaced
+                    new_id = rewrite_unique_id(old_id, old_serial_number, new_serial_number)
+                    if new_id == old_id:
+                        continue
                     _LOGGER.info("updating entity id from %s to %s", old_id, new_id)
                     er.async_get(self._hass).async_update_entity(entity_entry.entity_id, new_unique_id=new_id)
                 except Exception as err:
                     _LOGGER.error("failed to update entity id: %s", err)
-
-            await device.write_modbus_data(20002, upper)
-            await device.write_modbus_data(20003, lower)
 
             self._hass.config_entries.async_schedule_reload(entry_id)
 
@@ -70,7 +81,15 @@ class NoSerialNumber(RepairsFlow):
 
         return self.async_show_form(
             step_id="confirm",
-            data_schema=vol.Schema({vol.Required("new_serial", default=int(time.time())): int}),
+            # EXTENDED 1.0.4: the serial number is stored in two 16-bit registers; 0 and
+            # 4294967295 mean "no serial number", larger values would be cut off silently.
+            data_schema=vol.Schema(
+                {
+                    vol.Required("new_serial", default=int(time.time())): vol.All(
+                        int, vol.Range(min=1, max=0xFFFFFFFE)
+                    )
+                }
+            ),
         )
 
 

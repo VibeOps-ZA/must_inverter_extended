@@ -14,6 +14,8 @@ CONF_RETRIES = "retries"
 CONF_RECONNECT_DELAY = "reconnect_delay"
 CONF_RECONNECT_DELAY_MAX = "reconnect_delay_max"
 CONF_DEVICE_ID = "device_id"
+# EXTENDED 1.1.0: expert option - calibration values can only be written while this is on
+CONF_ALLOW_CALIBRATION_WRITES = "allow_calibration_writes"
 
 DEFAULT_SCAN_INTERVAL = 15
 DEFAULT_DEVICE_ID = 0x04
@@ -273,6 +275,37 @@ PH1100_SENSORS = [
 ]
 # fmt: on
 
+# EXTENDED 1.1.0: sensors that describe the inverter or repeat a setting rather than
+# measure something. They get the entity category "diagnostic": same entity ids, but they
+# are listed under "Diagnostic" on the device page and are not offered to voice assistants
+# or put on automatically generated dashboards. (Numbers, selects, switches, buttons and
+# time entities - the settings - get the category "config" in their own files.)
+DIAGNOSTIC_SENSORS = frozenset(
+    {
+        # identity
+        "InverterMachineType",
+        "InverterSerialNumber",
+        "InverterHardwareVersion",
+        "InverterSoftwareVersion",
+        # fixed ratings
+        "BattVolGrade",
+        "RatedCurrent",
+        "AcVoltageGrade",
+        "RatedPower",
+        "RatedPowerW",
+        # parallel operation
+        "InverterMaxNumber",
+        "CombineType",
+        "InverterNumber",
+        # settings that can only be read
+        "SystemSetting",
+        "AbsorbVoltage",
+        "BatteryHighVoltage",
+        "AbsorbChargerCurrent",
+        "InverterBatteryHighVoltage",
+    }
+)
+
 OPTIONS = {
     "EnergyUseMode": ["", "sbu", "sub", "uti", "sol"],
     "GridProtectStandard": ["vde4105", "ups", "apl", "gen"],
@@ -282,7 +315,14 @@ OPTIONS = {
     "BatteryType": ["", "user_defined", "lithium", "sealed_lead", "agm", "gel", "flooded"],
     "ChargerWorkstate": ["initialization", "selftest", "work", "stop"],
     "MpptState": ["stop", "mppt", "current_limiting"],
-    "ChargingState": ["stop", "absorb_charge", "float_charge", "equalization_charge"],
+    # EXTENDED 1.1.0: 3 is no longer shown as "equalization_charge". For this inverter family
+    # only 0-2 are defined (Must protocol document and, as reported from the vendor's
+    # SolarPowerMonitor 2.2.81, its table for these inverters); "EQ charge" for 3 exists only
+    # in that software's table for PC1800 solar charge controllers. On a PV18-4024PREM 3 was
+    # seen with the MPPT off near full, not during equalization. 3 now shows as unknown like
+    # 5 and 8, with the number in the raw_value attribute. The translations keep the old
+    # name so that history recorded before this change still reads properly.
+    "ChargingState": ["stop", "absorb_charge", "float_charge"],
 }
 
 # fmt: off
@@ -335,7 +375,7 @@ INVERTER_ERROR = [
     "Inverter output current sensor error",
     "Inverter grid current sensor error",
     "Inverter load current sensor error",
-    "Inverter grid over current error"
+    "Inverter grid over current error",
     # 2
     "Inverter radiator over temperature",
     "Solar charger battery voltage class error",
@@ -382,6 +422,8 @@ CHARGER_ERROR = [
     "Current sensor error",
     "Over temperature",
     "PV voltage is too high",
+    # Bit 5: this text comes from the PC1800 charge-controller table and is not confirmed
+    # for the inverters this integration supports. Shown as before; treat with care.
     "PV voltage is too low",
     "Battery voltage is too high",
     "Battery voltage is too Low",

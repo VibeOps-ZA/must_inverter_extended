@@ -3,10 +3,11 @@ from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import callback
-from homeassistant.const import Platform
+from homeassistant.const import EntityCategory, Platform
 
 from .const import DOMAIN, OPTIONS, Sensor
 from .__init__ import MustInverter
+from .safeguards import option_for_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,10 +36,12 @@ class MustInverterSelect(SelectEntity):
         self._address = sensor_info.address
 
         self._attr_has_entity_name = True
+        self._attr_entity_category = EntityCategory.CONFIG  # EXTENDED 1.1.0: a setting
         self._attr_unique_id = f"{self._inverter.data['InverterSerialNumber']}_{self._key}"
         self._attr_translation_key = self._key.lower()
         self._attr_entity_registry_enabled_default = sensor_info.enabled
         self._attr_options = list(filter(len, self._options))
+        self._unmapped_logged = set()
 
     async def async_added_to_hass(self):
         self._inverter.async_add_must_inverter_sensor(self._inverter_data_updated)
@@ -53,7 +56,15 @@ class MustInverterSelect(SelectEntity):
     @property
     def current_option(self):
         if self._key in self._inverter.data:
-            return self._options[self._inverter.data[self._key]]
+            # EXTENDED 1.0.4: a value without an option name (outside the list, negative,
+            # or a gap in the list) is reported as unknown instead of raising IndexError
+            # on every poll or picking a wrong option - same as the enum sensors.
+            value = self._inverter.data[self._key]
+            option = option_for_value(self._options, value)
+            if option is None and value not in self._unmapped_logged:
+                self._unmapped_logged.add(value)
+                _LOGGER.warning("%s: undocumented value %s, reporting as unknown", self._key, value)
+            return option
 
     async def async_select_option(self, option: str) -> None:
         value = self._options.index(option)
@@ -66,5 +77,6 @@ class MustInverterSelect(SelectEntity):
         return self._inverter._device_info()
 
     @property
-    def available(self) -> dict[str, Any] | None:
-        return self._key in self._inverter.data
+    def available(self) -> bool:
+        # EXTENDED 1.1.0: not available either when the value has become too old
+        return self._inverter.has_fresh(self._key)
