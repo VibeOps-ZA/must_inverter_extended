@@ -39,7 +39,9 @@ your existing devices, entities, dashboards and automations keep working unchang
 9. [Safety - read this before changing settings](#safety---read-this-before-changing-settings)
 10. [Register findings (for other models and researchers)](#register-findings-for-other-models-and-researchers)
 11. [Troubleshooting](#troubleshooting)
-12. [Acknowledgments](#acknowledgments) and [License](#license)
+12. [For developers: running the tests](#for-developers-running-the-tests)
+13. [Acknowledgments](#acknowledgments), [Repair: Mismatched Modbus Registers](#repair-mismatched-modbus-registers)
+    and [License](#license)
 
 ---
 
@@ -58,6 +60,10 @@ your existing devices, entities, dashboards and automations keep working unchang
 | Inverter powered off at start-up | `KeyError` | Clean "no data" retry (upstream PR #117) |
 | Home Assistant restart | Polling continues during shutdown: modbus read errors and a read task HA can't cancel | Polling stops when shutdown starts; nothing logged |
 | Serial number | Passed as a number - breaks in **HA 2026.12** | Passed as text (upstream issue #119) |
+| Inverter faults | Only the first fault register is decoded - over temperature, grid and battery-connection faults show "No errors" | Both fault registers are decoded |
+| Inverter answers "all zeroes" (after it shut itself down) | Taken as real: serial number 0, energy totals 0, then counted twice in the Energy dashboard | Ignored - previous values are kept, a warning is logged |
+| A setting the inverter refuses | Looks like it worked | The action fails with an error message |
+| Diagnostics download | Contains the serial number in the raw registers | Serial number hidden |
 
 Full history: [CHANGELOG.md](CHANGELOG.md).
 
@@ -247,6 +253,7 @@ please open an issue with your results.
 | 20117 | Low-battery warning voltage (= switch-to-grid voltage 20118 - 0.3 V). |
 | 20145 / 20146 | Probably SOC-mode enable (1) and low-SOC cut-off (10 %). Not exposed. |
 | 20147 / 20148 | SOC back to grid / back to battery (%). The inverter switches to grid when SoC <= 20147 and, once latched, stays on grid while SoC < 20148. Lowering 20148 below the current SoC releases back to battery after ~8-9 minutes. |
+| 25269-25272 | Copies of the serial number (25269-25270) and of the hardware / software version (25271-25272). |
 | 25273 | Battery power in W (negative = charging). |
 | 25275 | 24 - likely the battery voltage class (24 V). |
 | 25278 | Same value as 20006 (version-like, 10414). |
@@ -272,9 +279,28 @@ Other observations:
 | "previous read still in progress" | Increase the scan interval (15 s is a good start). |
 | Battery SoC / SoH unavailable | Your inverter has no BMS link (or uses a different register). The log says so once, after 3 tries. |
 | Settings changed by themselves | Some Must firmware resets settings after certain writes - restore from your notes. |
+| Log says "ignoring an implausible answer ... every register is 0" | The inverter answered with empty data and the integration kept the last real values. If it does not stop, the inverter has probably shut itself down: switch off PV, grid and battery, wait a minute, and switch it back on. |
+| Changing a setting fails with "The inverter refused to write ..." | The inverter did not accept that value (out of its own limits, or not allowed in the current mode). Nothing was changed. |
 | More detail needed | Add to `configuration.yaml`: `logger: { logs: { custom_components.must_inverter: debug } }` and restart. |
 
 Bugs and ideas: [open an issue](https://github.com/VibeOps-ZA/must_inverter_extended/issues).
+
+---
+
+## For developers: running the tests
+
+The decoding and safety logic is covered by tests that need neither Home Assistant nor an
+inverter - only [Python](https://www.python.org/downloads/) 3.13 or newer and
+[pytest](https://docs.pytest.org/en/stable/getting-started.html):
+
+```bash
+python3 -m pip install pytest
+python3 -m pytest
+```
+
+They use one poll recorded from a real PV18-4024PREM (`tests/fixtures/`, serial number replaced)
+and a list of the entity keys of a real installation (`tests/golden/`). A change that would rename
+or drop an existing entity fails the tests. They also run automatically on every pull request.
 
 ---
 
@@ -295,7 +321,7 @@ This project is not affiliated with Must Solar. Use at your own risk.
 ## Repair: Mismatched Modbus Registers
 
 Home Assistant shows this repair when the inverter's replies don't match what the integration
-asked for **at least 3 times within 10 minutes** (ignored for the first 2 minutes after Home
+asked for **in at least 3 polls within 10 minutes** (ignored for the first 2 minutes after Home
 Assistant starts). It clears itself after 10 good reads in a row.
 
 A single mismatch right after a restart is normal: Home Assistant is busy while starting or

@@ -335,7 +335,7 @@ INVERTER_ERROR = [
     "Inverter output current sensor error",
     "Inverter grid current sensor error",
     "Inverter load current sensor error",
-    "Inverter grid over current error"
+    "Inverter grid over current error",
     # 2
     "Inverter radiator over temperature",
     "Solar charger battery voltage class error",

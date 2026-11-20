@@ -4,6 +4,58 @@ All notable changes to **Must Inverter Extended** are listed here.
 Versions before 1.0.0 are the original [ha-must-inverter](https://github.com/mukaschultze/ha-must-inverter)
 releases by @mukaschultze - see its [releases page](https://github.com/mukaschultze/ha-must-inverter/releases).
 
+## [1.0.4] - unreleased
+
+Reliability fixes found in a code review. No entity is renamed, added or removed: every entity id
+and unique id stays exactly as it was.
+
+### Fixed
+- **Inverter faults from the second fault register were never shown.** A missing comma joined two
+  fault texts, which made the integration decode only register 25261. Faults reported in 25262 -
+  radiator over temperature, grid voltage or frequency out of range, bus voltage too low, over
+  current protection, battery connection open and others - left the *Error message inverter* sensor
+  on "No errors". Both registers are decoded now, and bit 15 of the first one reads "Inverter grid
+  over current error" instead of two texts glued together.
+- **An inverter that answers "all zeroes" is no longer believed.** A Must inverter that has shut
+  itself down answers every register with 0 until it is fully powered off and on. Taken as real
+  data, that set the serial number to 0 - Home Assistant starting in that state created a whole new
+  set of entities - and dropped the lifetime energy counters to 0, after which Home Assistant
+  counted the complete totals a second time in the Energy dashboard. Answers that are all 0 or all
+  65535 in a block that always holds fixed values are now ignored (the previous values are kept and
+  one warning is logged), and at start-up the integration waits and retries instead.
+- **A serial number that changes while Home Assistant is running is ignored** (damaged answer). It
+  could raise the "No serial number set" repair by mistake.
+- **A write the inverter refuses now fails visibly.** Before, the entity showed the new value until
+  the next poll and automations carried on as if the setting had changed. The service call now ends
+  with an error naming the register.
+- **One late reply no longer spoils the rest of the poll or raises the repair.** A reply arriving
+  after its request had been repeated was taken as the answer to the next request, shifting every
+  later reply by one; each shifted reply counted as a mismatch, so one event could raise "Mismatched
+  Modbus Registers" by itself. The integration now pauses for a second after such a reply (and after
+  any answer that needed a retry) so the late reply is thrown away, and counts one mismatch per poll.
+- **PV1900:** PV1 current and power (15207-15208) are taken from the 15201-15221 block that is read
+  anyway instead of a second read. Both that read and battery SoC/SoH (113-114) were 2 registers
+  long, so a late reply to one could be shown as the other.
+- **Select entities** (energy use mode, battery type, charger source priority ...) report *unknown*
+  for a value without a documented meaning instead of raising `IndexError` on every poll.
+- **Number entities missing after an incomplete first read.** If the battery voltage class or rated
+  current had not been read when Home Assistant started, all number entities failed to load until
+  the integration was reloaded. Home Assistant now retries them by itself.
+- **"No serial number set" repair:** the new serial number is written to the inverter first and
+  Home Assistant is only updated when that worked; only the serial number at the start of each
+  unique id is replaced (with an old serial of 0 every "0" in the id was replaced); the value must
+  be between 1 and 4294967294.
+- **Diagnostics download no longer contains the serial number** in the raw register list
+  (20002-20003 and a copy in 25269-25270; 20001-20003 on PH1100) or in the state of the serial
+  number sensor.
+- **Scan interval** must be at least 1 second (0 polled without a pause).
+
+### Added
+- Automated tests (`tests/`, 224 checks) that need neither Home Assistant nor an inverter: number
+  formats and scaling against a recorded poll of a PV18-4024PREM, both fault registers, the poll
+  loop against a scripted fake inverter (blank answers, late replies, refused writes), and a list of
+  all 156 entity keys of a real installation that must never change. They run on every pull request.
+
 ## [1.0.3] - 2026-10-21
 
 ### Fixed

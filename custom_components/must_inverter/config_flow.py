@@ -72,7 +72,10 @@ COMMON_SCHEMA = vol.Schema(
                 }
             }
         ),
-        vol.Required(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.Coerce(float),
+        # EXTENDED 1.0.4: at least 1 second - 0 or less would poll without a pause
+        vol.Required(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): vol.All(
+            vol.Coerce(float), vol.Range(min=1)
+        ),
         vol.Required(CONF_MODE): selector(
             {
                 "select": {

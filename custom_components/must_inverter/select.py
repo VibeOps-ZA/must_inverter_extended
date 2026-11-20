@@ -7,6 +7,7 @@ from homeassistant.const import Platform
 
 from .const import DOMAIN, OPTIONS, Sensor
 from .__init__ import MustInverter
+from .safeguards import option_for_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class MustInverterSelect(SelectEntity):
         self._attr_translation_key = self._key.lower()
         self._attr_entity_registry_enabled_default = sensor_info.enabled
         self._attr_options = list(filter(len, self._options))
+        self._unmapped_logged = set()
 
     async def async_added_to_hass(self):
         self._inverter.async_add_must_inverter_sensor(self._inverter_data_updated)
@@ -53,7 +55,15 @@ class MustInverterSelect(SelectEntity):
     @property
     def current_option(self):
         if self._key in self._inverter.data:
-            return self._options[self._inverter.data[self._key]]
+            # EXTENDED 1.0.4: a value without an option name (outside the list, negative,
+            # or a gap in the list) is reported as unknown instead of raising IndexError
+            # on every poll or picking a wrong option - same as the enum sensors.
+            value = self._inverter.data[self._key]
+            option = option_for_value(self._options, value)
+            if option is None and value not in self._unmapped_logged:
+                self._unmapped_logged.add(value)
+                _LOGGER.warning("%s: undocumented value %s, reporting as unknown", self._key, value)
+            return option
 
     async def async_select_option(self, option: str) -> None:
         value = self._options.index(option)

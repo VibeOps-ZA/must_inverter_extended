@@ -7,6 +7,7 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .const import DOMAIN
 from .__init__ import MustInverter
+from .safeguards import REDACTED, is_serial_number_unique_id, redact_registers
 
 # Add more fields that might contain sensitive information
 TO_REDACT = {
@@ -61,7 +62,9 @@ def _async_devices_as_dict(hass: HomeAssistant, entry: ConfigEntry) -> dict:
         "model": device.model,
         "device_info": async_redact_data(device_info, TO_REDACT_DEV),
         "data": async_redact_data(device.data, TO_REDACT),
-        "registers": device.registers,
+        # EXTENDED 1.0.4: the raw registers include the serial number (20002-20003 and
+            # a copy in 25269-25270; 20001-20003 on PH1100) - hide it like everywhere else.
+            "registers": redact_registers(device.registers),
         "home_assistant": _async_device_ha_info(hass, device_info["identifiers"]),
     }
 
@@ -107,6 +110,9 @@ def _async_device_ha_info(hass: HomeAssistant, identifiers: set[tuple[str, str]]
             # Remove redundant or sensitive information
             state_dict.pop("entity_id", None)
             state_dict.pop("context", None)
+            # EXTENDED 1.0.4: the serial number sensor (and the raw copies of it)
+            if is_serial_number_unique_id(entity_entry.unique_id):
+                state_dict["state"] = REDACTED
 
         data["entities"][entity_entry.entity_id] = {
             "name": entity_entry.name,
