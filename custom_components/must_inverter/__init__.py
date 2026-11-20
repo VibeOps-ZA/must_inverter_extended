@@ -38,6 +38,7 @@ from .const import (
     CONF_RECONNECT_DELAY,
     CONF_RECONNECT_DELAY_MAX,
     CONF_DEVICE_ID,
+    CONF_ALLOW_CALIBRATION_WRITES,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_DEVICE_ID,
     get_sensors_for_model,
@@ -59,7 +60,7 @@ from .mapper import (
     convert_battery_status,
     convert_pv_data,
 )
-from .safeguards import block_reject_reason, serial_number_changed
+from .safeguards import block_reject_reason, serial_number_changed, write_refusal_reason
 # from .utils.register_monitor import RegisterMonitor
 
 PLATFORMS = [
@@ -258,6 +259,8 @@ class MustInverter:
         self._client.dtr = False
         self._lock = asyncio.Lock()
         self._device_id = entry.options.get(CONF_DEVICE_ID, DEFAULT_DEVICE_ID)
+        # EXTENDED 1.1.0: off unless the user turned the expert option on
+        self._allow_calibration_writes = bool(entry.options.get(CONF_ALLOW_CALIBRATION_WRITES, False))
         self._scan_interval = timedelta(
             seconds=max(MIN_SCAN_INTERVAL_S, float(entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)))
         )
@@ -584,6 +587,11 @@ class MustInverter:
         return result
 
     async def write_modbus_data(self, address, value):
+        # EXTENDED 1.1.0: every write passes here, so this covers all entities and services
+        refusal = write_refusal_reason(address, self._allow_calibration_writes)
+        if refusal:
+            raise HomeAssistantError(f"Register {address} was not written: {refusal}")
+
         await self._check_and_reopen()
 
         _LOGGER.debug("writing modbus data: %s %s", address, value)

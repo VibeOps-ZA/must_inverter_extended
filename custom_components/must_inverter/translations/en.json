@@ -50,6 +50,7 @@
         "title": "PyModbus advanced settings",
         "description": "Leave this section unchanged unless you are seeing connection issues or need to adjust the modbus connection settings.",
         "data": {
+          "allow_calibration_writes": "Allow calibration writes (expert)",
           "device_id": "Device ID",
           "timeout": "Timeout (seconds)",
           "retries": "Retries",
@@ -57,6 +58,7 @@
           "reconnect_delay_max": "Max Reconnect Delay (seconds)"
         },
         "data_description": {
+          "allow_calibration_writes": "Leave this off. The calibration numbers (disabled by default) change how the inverter measures its own voltages and currents; a wrong value can make it charge the battery too high or too low and cannot easily be undone. While this is off, any attempt to change one is refused.",
           "device_id": "The Modbus device ID (slave address) of the inverter. Default is 4 (0x04). Use this option only when there are multiple inverters connected to the same serial port (such as in cases of inverters running in parallel)",
           "timeout": "Timeout for connecting and receiving data.",
           "retries": "Max number of retries per request.",
@@ -116,6 +118,7 @@
         "title": "PyModbus advanced settings",
         "description": "Leave this section unchanged unless you are seeing connection issues or need to adjust the modbus connection settings.",
         "data": {
+          "allow_calibration_writes": "Allow calibration writes (expert)",
           "device_id": "Device ID",
           "timeout": "Timeout (seconds)",
           "retries": "Retries",
@@ -123,6 +126,7 @@
           "reconnect_delay_max": "Max Reconnect Delay (seconds)"
         },
         "data_description": {
+          "allow_calibration_writes": "Leave this off. The calibration numbers (disabled by default) change how the inverter measures its own voltages and currents; a wrong value can make it charge the battery too high or too low and cannot easily be undone. While this is off, any attempt to change one is refused.",
           "device_id": "The Modbus device ID (slave address) of the inverter. Default is 4 (0x04). Use this option only when there are multiple inverters connected to the same serial port (such as in cases of inverters running in parallel)",
           "timeout": "Timeout for connecting and receiving data.",
           "retries": "Max number of retries per request.",

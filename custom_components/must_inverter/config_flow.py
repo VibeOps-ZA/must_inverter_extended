@@ -31,6 +31,7 @@ from .const import (
     CONF_RECONNECT_DELAY,
     CONF_RECONNECT_DELAY_MAX,
     CONF_DEVICE_ID,
+    CONF_ALLOW_CALIBRATION_WRITES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,6 +96,8 @@ MODBUS_SCHEMA = vol.Schema(
         vol.Required(CONF_RECONNECT_DELAY, default=0.3): vol.Coerce(float),
         vol.Required(CONF_RECONNECT_DELAY_MAX, default=1.0): vol.Coerce(float),
         vol.Required(CONF_DEVICE_ID, default=DEFAULT_DEVICE_ID): int,
+        # EXTENDED 1.1.0: calibration values are write-protected unless this is on
+        vol.Required(CONF_ALLOW_CALIBRATION_WRITES, default=False): bool,
     }
 )
 

@@ -41,6 +41,22 @@ SERIAL_NUMBER_REGISTERS = frozenset({20001, 20002, 20003, 25269, 25270})
 SERIAL_NUMBER_UNIQUE_ID_ENDINGS = ("_InverterSerialNumber", "_raw_25269", "_raw_25270")
 
 
+# Calibration values of the inverter's own measurements (battery, inverter, grid and bus
+# voltage; control, inverter, grid and load current). A wrong value makes the inverter
+# measure wrongly - for the battery voltage that means charging too high or too low.
+CALIBRATION_REGISTERS = frozenset(range(20009, 20017))
+
+
+def write_refusal_reason(address: int, allow_calibration_writes: bool) -> str | None:
+    """Return why a register must not be written right now, or None when it may be."""
+    if address in CALIBRATION_REGISTERS and not allow_calibration_writes:
+        return (
+            "calibration values are write-protected. Turn on 'Allow calibration writes' in the "
+            "integration's options (Configure > PyModbus advanced settings) if you really need to change one"
+        )
+    return None
+
+
 def block_reject_reason(start: int, values: Sequence[int]) -> str | None:
     """Return why a register block cannot be real, or None when it looks fine.
 

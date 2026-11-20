@@ -219,3 +219,46 @@ def test_entity_that_fails_to_update_does_not_stop_the_others(make_entities):
     inverter._callbacks.extend([broken, lambda: told.append(1)])
     assert poll(inverter) is True
     assert told == [1]
+
+
+# --- calibration values are write-protected ------------------------------------------------------
+
+CALIBRATION_KEYS = [
+    "InverterBatteryVoltageC",
+    "InverterVoltageC",
+    "GridVoltageC",
+    "BusVoltageC",
+    "ControlCurrentC",
+    "InverterCurrentC",
+    "GridCurrentC",
+    "LoadCurrentC",
+]
+
+
+@pytest.mark.parametrize("key", CALIBRATION_KEYS)
+def test_calibration_number_refuses_to_write_by_default(make_entities, key):
+    from homeassistant.exceptions import HomeAssistantError
+
+    inverter, client, entities = make_entities()
+    before = inverter.data[key]
+
+    with pytest.raises(HomeAssistantError, match="calibration"):
+        asyncio.run(entities[uid(key)].async_set_native_value(1234))
+
+    assert client.writes == []  # nothing reached the inverter
+    assert inverter.data[key] == before
+
+
+def test_calibration_number_writes_when_the_expert_option_is_on(make_entities):
+    _inverter, client, entities = make_entities(allow_calibration_writes=True)
+    asyncio.run(entities[uid("GridVoltageC")].async_set_native_value(1234))
+    assert client.writes == [(20011, 1234)]
+
+
+def test_normal_settings_are_not_affected_by_the_write_protection(make_entities):
+    inverter, client, entities = make_entities()
+    asyncio.run(entities[uid("FloatVoltage")].async_set_native_value(27.6))
+    asyncio.run(entities[uid("EnergyUseMode")].async_select_option("uti"))
+    asyncio.run(entities[uid("SolarPowerBalance")].async_turn_on())
+    assert client.writes == [(10103, 276), (20109, 3), (20144, 1)]
+    assert inverter.data["EnergyUseMode"] == 3

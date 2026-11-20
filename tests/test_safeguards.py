@@ -123,3 +123,17 @@ def test_serial_number_registers_are_hidden_in_diagnostics(safeguards, registers
 )
 def test_serial_number_entities_are_recognised(safeguards, unique_id, is_serial):
     assert safeguards.is_serial_number_unique_id(unique_id) is is_serial
+
+
+# --- write protection ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("address", range(20009, 20017))
+def test_calibration_registers_are_write_protected(safeguards, address):
+    assert "calibration" in safeguards.write_refusal_reason(address, allow_calibration_writes=False)
+    assert safeguards.write_refusal_reason(address, allow_calibration_writes=True) is None
+
+
+@pytest.mark.parametrize("address", [10103, 20002, 20008, 20017, 20109, 20142, 20213])
+def test_other_registers_are_not_write_protected(safeguards, address):
+    assert safeguards.write_refusal_reason(address, allow_calibration_writes=False) is None

@@ -14,6 +14,8 @@ CONF_RETRIES = "retries"
 CONF_RECONNECT_DELAY = "reconnect_delay"
 CONF_RECONNECT_DELAY_MAX = "reconnect_delay_max"
 CONF_DEVICE_ID = "device_id"
+# EXTENDED 1.1.0: expert option - calibration values can only be written while this is on
+CONF_ALLOW_CALIBRATION_WRITES = "allow_calibration_writes"
 
 DEFAULT_SCAN_INTERVAL = 15
 DEFAULT_DEVICE_ID = 0x04
